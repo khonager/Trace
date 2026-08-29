@@ -25,6 +25,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   int _activeConversation = 0;
   bool _dragIsActive = false;
   bool _desktopListCollapsed = false;
+  bool _backgroundsPrecached = false;
   double _transitionTravel = 1;
 
   @override
@@ -38,6 +39,21 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_backgroundsPrecached) return;
+    _backgroundsPrecached = true;
+    for (final conversation in _conversations) {
+      final profileAsset = conversation.profileAsset;
+      if (profileAsset == null) continue;
+      precacheImage(
+        ResizeImage(AssetImage(profileAsset), width: 8, height: 8),
+        context,
+      );
+    }
   }
 
   @override
@@ -207,6 +223,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               showBackButton: false,
               onToggleList: _toggleDesktopList,
               listVisible: !_desktopListCollapsed,
+              backgroundCanvasWidth: width,
             ),
           ),
         ),
@@ -278,6 +295,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         composerController: _composerController,
                         onBack: _closeConversation,
                         onSend: _sendMessage,
+                        backgroundCanvasWidth: width,
+                        backgroundPageLeft: conversationLeft,
                       ),
                     ),
                     if (progress > 0 || _avatarPromotion.value > 0)
@@ -547,6 +566,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
     this.showBackButton = true,
     this.onToggleList,
     this.listVisible = true,
+    required this.backgroundCanvasWidth,
+    this.backgroundPageLeft,
   });
 
   final List<_Conversation> conversations;
@@ -557,25 +578,22 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final bool showBackButton;
   final VoidCallback? onToggleList;
   final bool listVisible;
+  final double backgroundCanvasWidth;
+  final double? backgroundPageLeft;
 
   @override
   Widget build(BuildContext context) {
     return ClipRect(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 160),
-        transitionBuilder: (child, animation) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        child: _ConversationView(
-          key: Key('conversation-view-${conversations[activeIndex].id}'),
-          conversation: conversations[activeIndex],
-          composerController: composerController,
-          onBack: onBack,
-          onSend: onSend,
-          showBackButton: showBackButton,
-          onToggleList: onToggleList,
-          listVisible: listVisible,
-        ),
+      child: _ConversationView(
+        conversation: conversations[activeIndex],
+        composerController: composerController,
+        onBack: onBack,
+        onSend: onSend,
+        showBackButton: showBackButton,
+        onToggleList: onToggleList,
+        listVisible: listVisible,
+        backgroundCanvasWidth: backgroundCanvasWidth,
+        backgroundPageLeft: backgroundPageLeft,
       ),
     );
   }
@@ -664,7 +682,6 @@ class _ConversationAvatar extends StatelessWidget {
 
 class _ConversationView extends StatelessWidget {
   const _ConversationView({
-    super.key,
     required this.conversation,
     required this.composerController,
     required this.onBack,
@@ -672,6 +689,8 @@ class _ConversationView extends StatelessWidget {
     required this.showBackButton,
     required this.onToggleList,
     required this.listVisible,
+    required this.backgroundCanvasWidth,
+    required this.backgroundPageLeft,
   });
 
   final _Conversation conversation;
@@ -681,6 +700,8 @@ class _ConversationView extends StatelessWidget {
   final bool showBackButton;
   final VoidCallback? onToggleList;
   final bool listVisible;
+  final double backgroundCanvasWidth;
+  final double? backgroundPageLeft;
 
   @override
   Widget build(BuildContext context) {
@@ -747,7 +768,22 @@ class _ConversationView extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                _ConversationBackground(conversation: conversation),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 900),
+                  reverseDuration: const Duration(milliseconds: 900),
+                  switchInCurve: Curves.easeInOutCubic,
+                  switchOutCurve: Curves.easeInOutCubic,
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: _ConversationBackground(
+                    key: ValueKey(
+                      'conversation-background-transition-${conversation.id}',
+                    ),
+                    conversation: conversation,
+                    canvasWidth: backgroundCanvasWidth,
+                    pageLeft: backgroundPageLeft,
+                  ),
+                ),
                 ListView.builder(
                   reverse: true,
                   padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
@@ -775,9 +811,16 @@ class _ConversationView extends StatelessWidget {
 }
 
 class _ConversationBackground extends StatelessWidget {
-  const _ConversationBackground({required this.conversation});
+  const _ConversationBackground({
+    super.key,
+    required this.conversation,
+    required this.canvasWidth,
+    required this.pageLeft,
+  });
 
   final _Conversation conversation;
+  final double canvasWidth;
+  final double? pageLeft;
 
   @override
   Widget build(BuildContext context) {
@@ -789,71 +832,97 @@ class _ConversationBackground extends StatelessWidget {
       );
     }
 
-    return ClipRect(
-      key: Key('conversation-background-${conversation.id}'),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          ColoredBox(
-            color: Color.alphaBlend(
-              Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.48),
-              Theme.of(context).colorScheme.surfaceContainerHigh,
-            ),
-          ),
-          Opacity(
-            opacity: 0.88,
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(sigmaX: 48, sigmaY: 48),
-              child: Transform.scale(
-                scale: 1.42,
-                child: ColorFiltered(
-                  colorFilter: const ColorFilter.matrix([
-                    1.27545,
-                    -0.25025,
-                    -0.0252,
-                    0,
-                    0,
-                    -0.07455,
-                    1.09975,
-                    -0.0252,
-                    0,
-                    0,
-                    -0.07455,
-                    -0.25025,
-                    1.3248,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                  ]),
-                  child: RotatedBox(
-                    quarterTurns: 1,
-                    child: Image.asset(
-                      profileAsset,
-                      key: Key(
-                        'conversation-background-image-${conversation.id}',
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final anchoredPageLeft =
+            pageLeft ?? (canvasWidth - constraints.maxWidth);
+        return ClipRect(
+          key: Key('conversation-background-${conversation.id}'),
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            minWidth: canvasWidth,
+            maxWidth: canvasWidth,
+            minHeight: constraints.maxHeight,
+            maxHeight: constraints.maxHeight,
+            child: Transform.translate(
+              offset: Offset(-anchoredPageLeft, 0),
+              child: SizedBox(
+                key: Key('conversation-background-canvas-${conversation.id}'),
+                width: canvasWidth,
+                height: constraints.maxHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ColoredBox(
+                      color: Color.alphaBlend(
+                        Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.48),
+                        Theme.of(context).colorScheme.surfaceContainerHigh,
                       ),
-                      fit: BoxFit.cover,
-                      alignment: Alignment.topCenter,
-                      cacheWidth: 8,
-                      cacheHeight: 8,
-                      filterQuality: FilterQuality.medium,
                     ),
-                  ),
+                    Opacity(
+                      opacity: 0.88,
+                      child: ImageFiltered(
+                        imageFilter: ui.ImageFilter.blur(
+                          sigmaX: 48,
+                          sigmaY: 48,
+                        ),
+                        child: Transform.scale(
+                          scale: 1.42,
+                          child: ColorFiltered(
+                            colorFilter: const ColorFilter.matrix([
+                              1.27545,
+                              -0.25025,
+                              -0.0252,
+                              0,
+                              0,
+                              -0.07455,
+                              1.09975,
+                              -0.0252,
+                              0,
+                              0,
+                              -0.07455,
+                              -0.25025,
+                              1.3248,
+                              0,
+                              0,
+                              0,
+                              0,
+                              0,
+                              1,
+                              0,
+                            ]),
+                            child: RotatedBox(
+                              quarterTurns: 1,
+                              child: Image.asset(
+                                profileAsset,
+                                key: Key(
+                                  'conversation-background-image-${conversation.id}',
+                                ),
+                                fit: BoxFit.cover,
+                                alignment: Alignment.topCenter,
+                                cacheWidth: 8,
+                                cacheHeight: 8,
+                                filterQuality: FilterQuality.medium,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    ColoredBox(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.08),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
-          ColoredBox(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.08),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

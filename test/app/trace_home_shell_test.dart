@@ -42,6 +42,49 @@ void main() {
     );
   });
 
+  testWidgets('desktop chat backgrounds use a sustained crossfade', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(const TraceApp());
+    await tester.tap(find.byKey(const Key('conversation-row-1')));
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(
+      find.byKey(const Key('conversation-background-canvas-maya')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('conversation-background-canvas-kai')),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.byKey(const Key('conversation-background-canvas-maya')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('conversation-background-canvas-kai')),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('conversation-background-canvas-maya')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('conversation-background-canvas-kai')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('bottom toolbar switches between pages', (tester) async {
     await tester.pumpWidget(const TraceApp());
 
@@ -218,6 +261,29 @@ void main() {
     );
 
     await tester.pump(const Duration(milliseconds: 200));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('pulling a chat reveals an app-anchored background', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    final background = find.byKey(
+      const Key('conversation-background-canvas-maya'),
+    );
+    final startX = tester.getTopLeft(background).dx;
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('conversation-row-0'))),
+    );
+    await gesture.moveBy(const Offset(-20, 0));
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.moveBy(const Offset(-180, 0));
+    await tester.pump();
+
+    expect(tester.getTopLeft(background).dx, closeTo(startX, 0.1));
+
     await gesture.up();
     await tester.pumpAndSettle();
   });

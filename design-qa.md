@@ -1,5 +1,13 @@
 # Design QA
 
+## Background switching
+
+- Chat backgrounds now use a 900 ms symmetric ease-in-out dissolve.
+- Only the background participates in the long transition, so the title,
+  messages, and composer react immediately to a chat selection.
+- The widget test keeps both old and new background canvases present after
+  520 ms, guarding against the previous blink-like replacement.
+
 - Source visual truth: the user's paper sketch and the previously verified
   narrow-layout implementation, supported by the structural Edge Rail
   exploration at
@@ -13,6 +21,8 @@
 - Background abstraction comparison: `/tmp/trace-profile-background-comparison.png`.
 - Richer profile-color screenshot: `/tmp/trace-richer-profile-colors.png`.
 - Color-density comparison: `/tmp/trace-profile-color-richness-comparison.png`.
+- App-anchored background screenshot: `/tmp/trace-anchored-background-release.png`.
+- Background-anchor comparison: `/tmp/trace-background-anchor-comparison.png`.
 - Viewport: 1061 x 1386 logical compositor pixels in the Linux Flutter window;
   the 60-pixel window title bar was excluded from the comparison.
 - Desktop source and implementation pixels: 1414 x 1768 app-owned crops,
@@ -37,6 +47,10 @@ The color-density comparison also uses the same fullscreen viewport and state.
 The revised pass replaces the pale base with a mid-dark neutral, increases the
 profile-color contribution, boosts saturation, and reduces the dark scrim. Maya's
 warm brown and blue-grey fields are visibly denser while remaining abstract.
+
+The background-anchor comparison confirms that the color field is centered on
+the full app canvas rather than the currently visible conversation pane. Static
+content, bubbles, cards, and typography remain unchanged.
 
 In the overview, every avatar now sits visually inside its conversation card.
 Time is left-aligned while the name and message preview lead into the avatar on
@@ -73,7 +87,9 @@ No actionable P0, P1, or P2 mismatch remains for the agreed low-fidelity scope.
 Widget tests cover the wide split view, selecting a chat without leaving that
 view, collapsing the list so the conversation reaches the window edge, restoring
 the list, photo avatars, initials-only fallback, profile-derived backgrounds,
-plain group backgrounds, page-toolbar navigation, opening and closing a conversation,
+plain group backgrounds, overlapping old/new backgrounds during an eased chat
+crossfade, keeping the background canvas at the same app-space X coordinate
+during a partial swipe, page-toolbar navigation, opening and closing a conversation,
 opening the exact row where a swipe begins, following the drag before settling,
 moving the card ends from the overview's right edge to the focused chat's left
 edge, switching chats by tapping those card ends, snapping back after a short
@@ -119,6 +135,10 @@ console checks do not apply to this native Flutter implementation.
 - A following pass was still too milky. The neutral base is now darker, profile
   colors contribute 88 percent of the wash, saturation is modestly increased,
   and the final scrim is reduced without restoring face geometry.
+- Chat changes previously replaced the focused view in 160 milliseconds, and
+  the background inherited the moving page's position. Profile assets are now
+  precached, chat states overlap in a 380-millisecond eased crossfade, and the
+  background is an app-centered canvas revealed through the moving page clip.
 
 ## Follow-up polish
 
