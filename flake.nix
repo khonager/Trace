@@ -27,6 +27,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             flutter
+            rustup
             jdk17
             androidSdk
             android-tools

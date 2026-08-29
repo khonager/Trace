@@ -10,6 +10,8 @@ abstract interface class MatrixClientPort {
   Future<void> logout();
 
   Future<void> sendText({required String roomId, required String body});
+
+  Future<void> close();
 }
 
 sealed class MatrixLoginRequest {
@@ -30,7 +32,11 @@ final class PasswordLoginRequest extends MatrixLoginRequest {
 }
 
 final class SsoLoginRequest extends MatrixLoginRequest {
-  const SsoLoginRequest({required super.homeserver});
+  const SsoLoginRequest({required super.homeserver, required this.loginToken});
+
+  /// The short-lived token delivered to the app's callback URI after the
+  /// system browser completes the homeserver's SSO flow.
+  final String loginToken;
 }
 
 final class MatrixSyncUpdate {

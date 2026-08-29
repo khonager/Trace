@@ -1,4 +1,4 @@
-package chat.trace.trace
+package chat.trace.client
 
 import io.flutter.embedding.android.FlutterActivity
 

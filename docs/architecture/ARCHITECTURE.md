@@ -28,6 +28,7 @@ cheap.
 - `lib/features/call_audio`: exact-file approval and playback selection.
 - `lib/features/ai`: local/cloud provider boundary and disclosure gate.
 - `lib/features/file_transfer`: route selection between Matrix, P2P, and relay.
+- `lib/infrastructure/matrix`: Matrix Dart SDK and vodozemac adapters.
 - `lib/app`: disposable composition and presentation shell.
 
 ## Data ownership
@@ -48,10 +49,16 @@ iOS background caller-audio limitations.
 
 ## Matrix SDK decision
 
-No Matrix SDK is linked yet. The stable Dart SDK gives the shortest path but is
-AGPL-3.0-only. The official Rust SDK is Apache-2.0 and production-ready but
-requires a maintained Flutter FFI layer. The `MatrixClientPort` protects the
-rest of the application while project licensing is decided.
+Trace uses `matrix` 10.x, the Dart Matrix SDK, with `flutter_vodozemac` for
+end-to-end encryption. The SDK is isolated behind `MatrixClientPort`; domain
+and feature code must never import it. This preserves a migration path if SDK
+requirements change and keeps protocol details out of the future UI.
 
-This decision must be resolved before implementing authentication or encrypted
-timeline storage.
+The Matrix Dart SDK is AGPL-3.0-or-later. Distributing or offering a networked
+version of Trace must satisfy the corresponding-source and license obligations.
+This is a deliberate tradeoff for the more mature Flutter integration.
+
+The SDK database is injected into the client factory. Do not use the SDK's
+unencrypted native SQLite example in production: each platform must provide an
+encrypted database and keep its key in OS secure storage. Session restoration
+calls `Client.init()` only after crypto and that database are available.
