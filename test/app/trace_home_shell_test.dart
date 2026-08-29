@@ -57,6 +57,58 @@ void main() {
     expect(find.byKey(const Key('settings-page')), findsOneWidget);
   });
 
+  testWidgets('some test contacts use profile photos and groups use initials', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('profile-avatar-maya')),
+        matching: find.byType(Image),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('profile-avatar-kai')),
+        matching: find.byType(Image),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('profile-avatar-family')),
+        matching: find.byType(Image),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('profile photos become chat backgrounds with a plain fallback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    expect(
+      find.byKey(const Key('conversation-background-image-maya')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('conversation-row-2')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('conversation-background-family')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('conversation-background-image-family')),
+      findsNothing,
+    );
+  });
+
   testWidgets('conversation opens by tapping and closes back to overview', (
     tester,
   ) async {

@@ -9,12 +9,14 @@
 - Mid-drag screenshot: `/tmp/trace-no-rail-mid-drag.png`.
 - Desktop split-view screenshot: `/tmp/trace-desktop-split.png`.
 - Desktop before/after comparison: `/tmp/trace-desktop-split-comparison.png`.
+- Profile-color background screenshot: `/tmp/trace-abstract-profile-colors.png`.
+- Background abstraction comparison: `/tmp/trace-profile-background-comparison.png`.
 - Viewport: 1061 x 1386 logical compositor pixels in the Linux Flutter window;
   the 60-pixel window title bar was excluded from the comparison.
 - Desktop source and implementation pixels: 1414 x 1768 app-owned crops,
   normalized to 720 x 900 each.
-- State: Maya focused in the desktop split view, full chat list visible on the
-  left, conversation on the right, Chats page selected.
+- State: Maya focused in the desktop split view, generated profile photo visible
+  only as the avatar, its abstracted color palette behind the conversation.
 
 ## Full-view comparison evidence
 
@@ -22,6 +24,12 @@ The desktop implementation removes the old centered 600-pixel cap. At the same
 wide viewport, the before/after comparison shows the chat list expanded on the
 left and the selected conversation using every remaining pixel on the right.
 Window chrome was removed before the side-by-side comparison.
+
+The latest background comparison uses the same fullscreen viewport and state.
+The rejected pass retained a recognizable light face silhouette; the final pass
+decodes the background copy at very low spatial resolution, rotates, enlarges,
+and blurs it. The result preserves charcoal, warm beige, and muted blue-grey
+fields without retaining a recognizable face or becoming a white wash.
 
 In the overview, every avatar now sits visually inside its conversation card.
 Time is left-aligned while the name and message preview lead into the avatar on
@@ -42,9 +50,10 @@ remains unchanged below the desktop breakpoint.
   do not overlap at the target viewport. Touch targets remain practical.
 - Colors and visual tokens: intentionally grayscale; selected and unread states
   retain sufficient contrast without deciding the final palette.
-- Image quality and asset fidelity: no custom imagery is part of this structural
-  prototype. Initials are deliberate profile fallbacks; icons use Flutter's
-  Material icon set.
+- Image quality and asset fidelity: Maya, Kai, and Samir use generated fictional
+  1024-pixel WebP portraits. Their avatars remain sharp while the background copy
+  is intentionally abstracted. Family and Book Club exercise the initials and
+  plain-background fallback. Icons use Flutter's Material icon set.
 - Copy and content: concise mock chat data exercises names, unread counts,
   encryption state, and message composition without adding product marketing.
 
@@ -56,7 +65,8 @@ No actionable P0, P1, or P2 mismatch remains for the agreed low-fidelity scope.
 
 Widget tests cover the wide split view, selecting a chat without leaving that
 view, collapsing the list so the conversation reaches the window edge, restoring
-the list, page-toolbar navigation, opening and closing a conversation,
+the list, photo avatars, initials-only fallback, profile-derived backgrounds,
+plain group backgrounds, page-toolbar navigation, opening and closing a conversation,
 opening the exact row where a swipe begins, following the drag before settling,
 moving the card ends from the overview's right edge to the focused chat's left
 edge, switching chats by tapping those card ends, snapping back after a short
@@ -96,6 +106,9 @@ console checks do not apply to this native Flutter implementation.
 - The initial desktop build constrained the entire app to a mobile-width column.
   Wide windows now use a responsive list-and-conversation split, while the
   conversation header can collapse and restore the list at any desktop width.
+- The first profile-background pass used a pale veil and still suggested a face.
+  The final treatment removes the veil and destroys the photo's spatial structure
+  before blurring, leaving only normalized color fields behind opaque bubbles.
 
 ## Follow-up polish
 

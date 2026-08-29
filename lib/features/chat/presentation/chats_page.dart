@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 const double _overviewHeaderHeight = 88;
@@ -637,7 +639,9 @@ class _ConversationAvatar extends StatelessWidget {
                 ),
                 alignment: Alignment.center,
                 child: _InitialsAvatar(
+                  key: Key('profile-avatar-${conversation.id}'),
                   initials: conversation.initials,
+                  imageAsset: conversation.profileAsset,
                   diameter: selected ? 42 : 40,
                   backgroundColor: Theme.of(
                     context,
@@ -740,20 +744,84 @@ class _ConversationView extends StatelessWidget {
           ),
           const Divider(height: 1),
           Expanded(
-            child: ListView.builder(
-              reverse: true,
-              padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-              itemCount: conversation.messages.length,
-              itemBuilder: (context, reverseIndex) {
-                final index = conversation.messages.length - reverseIndex - 1;
-                return _MessageBubble(message: conversation.messages[index]);
-              },
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _ConversationBackground(conversation: conversation),
+                ListView.builder(
+                  reverse: true,
+                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
+                  itemCount: conversation.messages.length,
+                  itemBuilder: (context, reverseIndex) {
+                    final index =
+                        conversation.messages.length - reverseIndex - 1;
+                    return _MessageBubble(
+                      message: conversation.messages[index],
+                    );
+                  },
+                ),
+              ],
             ),
           ),
           _MessageComposer(
             controller: composerController,
             conversationId: conversation.id,
             onSend: onSend,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationBackground extends StatelessWidget {
+  const _ConversationBackground({required this.conversation});
+
+  final _Conversation conversation;
+
+  @override
+  Widget build(BuildContext context) {
+    final profileAsset = conversation.profileAsset;
+    if (profileAsset == null) {
+      return ColoredBox(
+        key: Key('conversation-background-${conversation.id}'),
+        color: Theme.of(context).colorScheme.surface,
+      );
+    }
+
+    return ClipRect(
+      key: Key('conversation-background-${conversation.id}'),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHigh),
+          Opacity(
+            opacity: 0.72,
+            child: ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(sigmaX: 48, sigmaY: 48),
+              child: Transform.scale(
+                scale: 1.42,
+                child: RotatedBox(
+                  quarterTurns: 1,
+                  child: Image.asset(
+                    profileAsset,
+                    key: Key(
+                      'conversation-background-image-${conversation.id}',
+                    ),
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    cacheWidth: 8,
+                    cacheHeight: 8,
+                    filterQuality: FilterQuality.medium,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ColoredBox(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.2),
           ),
         ],
       ),
@@ -781,6 +849,22 @@ class _MessageBubble extends StatelessWidget {
               ? Theme.of(context).colorScheme.onSurface
               : Theme.of(context).colorScheme.surfaceContainer,
           borderRadius: BorderRadius.circular(16),
+          border: message.sentByMe
+              ? null
+              : Border.all(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outline.withValues(alpha: 0.65),
+                ),
+          boxShadow: [
+            BoxShadow(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Text(
           message.body,
@@ -854,17 +938,32 @@ class _MessageComposer extends StatelessWidget {
 
 class _InitialsAvatar extends StatelessWidget {
   const _InitialsAvatar({
+    super.key,
     required this.initials,
+    this.imageAsset,
     this.diameter = 46,
     this.backgroundColor,
   });
 
   final String initials;
+  final String? imageAsset;
   final double diameter;
   final Color? backgroundColor;
 
   @override
   Widget build(BuildContext context) {
+    if (imageAsset case final asset?) {
+      return ClipOval(
+        child: Image.asset(
+          asset,
+          width: diameter,
+          height: diameter,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+        ),
+      );
+    }
+
     return Container(
       width: diameter,
       height: diameter,
@@ -923,6 +1022,7 @@ final class _Conversation {
     required this.time,
     required this.unreadCount,
     required this.messages,
+    this.profileAsset,
   });
 
   final String id;
@@ -932,6 +1032,7 @@ final class _Conversation {
   final String time;
   int unreadCount;
   final List<_ChatMessage> messages;
+  final String? profileAsset;
 }
 
 final class _ChatMessage {
@@ -946,6 +1047,7 @@ List<_Conversation> _mockConversations() => [
     id: 'maya',
     name: 'Maya',
     initials: 'MA',
+    profileAsset: 'assets/profiles/maya.webp',
     preview: 'That works for me. See you then.',
     time: '10:36',
     unreadCount: 0,
@@ -966,6 +1068,7 @@ List<_Conversation> _mockConversations() => [
     id: 'kai',
     name: 'Kai',
     initials: 'KA',
+    profileAsset: 'assets/profiles/kai.webp',
     preview: 'Can you send me the updated file?',
     time: '10:34',
     unreadCount: 2,
@@ -1009,6 +1112,7 @@ List<_Conversation> _mockConversations() => [
     id: 'samir',
     name: 'Samir',
     initials: 'SA',
+    profileAsset: 'assets/profiles/samir.webp',
     preview: 'Thanks!',
     time: 'Monday',
     unreadCount: 0,
