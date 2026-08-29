@@ -11,6 +11,8 @@
 - Desktop before/after comparison: `/tmp/trace-desktop-split-comparison.png`.
 - Profile-color background screenshot: `/tmp/trace-abstract-profile-colors.png`.
 - Background abstraction comparison: `/tmp/trace-profile-background-comparison.png`.
+- Richer profile-color screenshot: `/tmp/trace-richer-profile-colors.png`.
+- Color-density comparison: `/tmp/trace-profile-color-richness-comparison.png`.
 - Viewport: 1061 x 1386 logical compositor pixels in the Linux Flutter window;
   the 60-pixel window title bar was excluded from the comparison.
 - Desktop source and implementation pixels: 1414 x 1768 app-owned crops,
@@ -30,6 +32,11 @@ The rejected pass retained a recognizable light face silhouette; the final pass
 decodes the background copy at very low spatial resolution, rotates, enlarges,
 and blurs it. The result preserves charcoal, warm beige, and muted blue-grey
 fields without retaining a recognizable face or becoming a white wash.
+
+The color-density comparison also uses the same fullscreen viewport and state.
+The revised pass replaces the pale base with a mid-dark neutral, increases the
+profile-color contribution, boosts saturation, and reduces the dark scrim. Maya's
+warm brown and blue-grey fields are visibly denser while remaining abstract.
 
 In the overview, every avatar now sits visually inside its conversation card.
 Time is left-aligned while the name and message preview lead into the avatar on
@@ -109,6 +116,9 @@ console checks do not apply to this native Flutter implementation.
 - The first profile-background pass used a pale veil and still suggested a face.
   The final treatment removes the veil and destroys the photo's spatial structure
   before blurring, leaving only normalized color fields behind opaque bubbles.
+- A following pass was still too milky. The neutral base is now darker, profile
+  colors contribute 88 percent of the wash, saturation is modestly increased,
+  and the final scrim is reduced without restoring face geometry.
 
 ## Follow-up polish
 

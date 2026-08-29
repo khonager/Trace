@@ -794,25 +794,54 @@ class _ConversationBackground extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHigh),
+          ColoredBox(
+            color: Color.alphaBlend(
+              Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.48),
+              Theme.of(context).colorScheme.surfaceContainerHigh,
+            ),
+          ),
           Opacity(
-            opacity: 0.72,
+            opacity: 0.88,
             child: ImageFiltered(
               imageFilter: ui.ImageFilter.blur(sigmaX: 48, sigmaY: 48),
               child: Transform.scale(
                 scale: 1.42,
-                child: RotatedBox(
-                  quarterTurns: 1,
-                  child: Image.asset(
-                    profileAsset,
-                    key: Key(
-                      'conversation-background-image-${conversation.id}',
+                child: ColorFiltered(
+                  colorFilter: const ColorFilter.matrix([
+                    1.27545,
+                    -0.25025,
+                    -0.0252,
+                    0,
+                    0,
+                    -0.07455,
+                    1.09975,
+                    -0.0252,
+                    0,
+                    0,
+                    -0.07455,
+                    -0.25025,
+                    1.3248,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                  ]),
+                  child: RotatedBox(
+                    quarterTurns: 1,
+                    child: Image.asset(
+                      profileAsset,
+                      key: Key(
+                        'conversation-background-image-${conversation.id}',
+                      ),
+                      fit: BoxFit.cover,
+                      alignment: Alignment.topCenter,
+                      cacheWidth: 8,
+                      cacheHeight: 8,
+                      filterQuality: FilterQuality.medium,
                     ),
-                    fit: BoxFit.cover,
-                    alignment: Alignment.topCenter,
-                    cacheWidth: 8,
-                    cacheHeight: 8,
-                    filterQuality: FilterQuality.medium,
                   ),
                 ),
               ),
@@ -821,7 +850,7 @@ class _ConversationBackground extends StatelessWidget {
           ColoredBox(
             color: Theme.of(
               context,
-            ).colorScheme.onSurface.withValues(alpha: 0.2),
+            ).colorScheme.onSurface.withValues(alpha: 0.08),
           ),
         ],
       ),
@@ -849,13 +878,11 @@ class _MessageBubble extends StatelessWidget {
               ? Theme.of(context).colorScheme.onSurface
               : Theme.of(context).colorScheme.surfaceContainer,
           borderRadius: BorderRadius.circular(16),
-          border: message.sentByMe
-              ? null
-              : Border.all(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.outline.withValues(alpha: 0.65),
-                ),
+          border: Border.all(
+            color: message.sentByMe
+                ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.32)
+                : Theme.of(context).colorScheme.outline.withValues(alpha: 0.65),
+          ),
           boxShadow: [
             BoxShadow(
               color: Theme.of(
