@@ -20,39 +20,34 @@ class _TraceHomeShellState extends State<TraceHomeShell> {
     return ColoredBox(
       color: Theme.of(context).scaffoldBackgroundColor,
       child: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 600),
-            child: Scaffold(
-              body: IndexedStack(
-                index: _page.index,
-                children: const [ChatsPage(), CallsPage(), SettingsPage()],
+        child: Scaffold(
+          body: IndexedStack(
+            index: _page.index,
+            children: const [ChatsPage(), CallsPage(), SettingsPage()],
+          ),
+          bottomNavigationBar: NavigationBar(
+            key: const Key('page-toolbar'),
+            selectedIndex: _page.index,
+            onDestinationSelected: (index) {
+              setState(() => _page = TracePage.values[index]);
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline),
+                selectedIcon: Icon(Icons.chat_bubble),
+                label: 'Chats',
               ),
-              bottomNavigationBar: NavigationBar(
-                key: const Key('page-toolbar'),
-                selectedIndex: _page.index,
-                onDestinationSelected: (index) {
-                  setState(() => _page = TracePage.values[index]);
-                },
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.chat_bubble_outline),
-                    selectedIcon: Icon(Icons.chat_bubble),
-                    label: 'Chats',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.call_outlined),
-                    selectedIcon: Icon(Icons.call),
-                    label: 'Calls',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.settings_outlined),
-                    selectedIcon: Icon(Icons.settings),
-                    label: 'Settings',
-                  ),
-                ],
+              NavigationDestination(
+                icon: Icon(Icons.call_outlined),
+                selectedIcon: Icon(Icons.call),
+                label: 'Calls',
               ),
-            ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: 'Settings',
+              ),
+            ],
           ),
         ),
       ),

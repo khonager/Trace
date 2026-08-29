@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-const double _overviewHeaderHeight = 82;
-const double _conversationRowHeight = 84;
-const double _chatRailWidth = 58;
+const double _overviewHeaderHeight = 88;
+const double _conversationRowHeight = 92;
+const double _chatRailWidth = 64;
 const double _chatPeekWidth = 28;
+const double _desktopSplitBreakpoint = 900;
 
 class ChatsPage extends StatefulWidget {
   const ChatsPage({super.key});
@@ -21,6 +22,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   late final AnimationController _avatarPromotion;
   int _activeConversation = 0;
   bool _dragIsActive = false;
+  bool _desktopListCollapsed = false;
   double _transitionTravel = 1;
 
   @override
@@ -147,12 +149,80 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     _composerController.clear();
   }
 
+  void _toggleDesktopList() {
+    setState(() => _desktopListCollapsed = !_desktopListCollapsed);
+  }
+
+  Widget _buildDesktopWorkspace(BuildContext context, double width) {
+    final listWidth = (width * 0.36).clamp(340.0, 430.0);
+    final visibleListWidth = _desktopListCollapsed ? 0.0 : listWidth;
+
+    return Row(
+      key: const Key('desktop-chat-workspace'),
+      children: [
+        AnimatedContainer(
+          key: const Key('desktop-chat-list-container'),
+          width: visibleListWidth,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          clipBehavior: Clip.hardEdge,
+          decoration: const BoxDecoration(),
+          child: OverflowBox(
+            alignment: Alignment.centerLeft,
+            minWidth: listWidth,
+            maxWidth: listWidth,
+            child: SizedBox(
+              width: listWidth,
+              child: _ChatOverview(
+                conversations: _conversations,
+                activeIndex: _activeConversation,
+                transitionProgress: 0,
+                avatarPromotion: 0,
+                transitionTravel: 1,
+                scrollController: _overviewScrollController,
+                onOpen: _selectConversation,
+                highlightActive: true,
+              ),
+            ),
+          ),
+        ),
+        if (!_desktopListCollapsed)
+          VerticalDivider(
+            key: const Key('desktop-pane-divider'),
+            width: 1,
+            thickness: 1,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+        Expanded(
+          child: SizedBox.expand(
+            key: const Key('desktop-conversation-pane'),
+            child: _FocusedChatWorkspace(
+              conversations: _conversations,
+              activeIndex: _activeConversation,
+              composerController: _composerController,
+              onBack: _closeConversation,
+              onSend: _sendMessage,
+              showBackButton: false,
+              onToggleList: _toggleDesktopList,
+              listVisible: !_desktopListCollapsed,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
+        if (width >= _desktopSplitBreakpoint) {
+          return _buildDesktopWorkspace(context, width);
+        }
+
         final initialWorkspaceLeft = width - _chatRailWidth - _chatPeekWidth;
+        final overviewCardWidth = width - _chatPeekWidth;
         _transitionTravel = initialWorkspaceLeft;
 
         return GestureDetector(
@@ -171,7 +241,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             builder: (context, _) {
               final progress = _workspaceTransition.value;
               final overviewLeft = -initialWorkspaceLeft * progress;
-              final workspaceLeft = initialWorkspaceLeft * (1 - progress);
+              final conversationLeft =
+                  _chatRailWidth + initialWorkspaceLeft * (1 - progress);
               final scrollOffset = _overviewScrollController.hasClients
                   ? _overviewScrollController.offset
                   : 0.0;
@@ -183,29 +254,57 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                       left: overviewLeft,
                       top: 0,
                       bottom: 0,
-                      width: initialWorkspaceLeft,
+                      width: overviewCardWidth,
                       child: _ChatOverview(
                         conversations: _conversations,
+                        activeIndex: _activeConversation,
+                        transitionProgress: progress,
+                        avatarPromotion: _avatarPromotion.value,
+                        transitionTravel: initialWorkspaceLeft,
                         scrollController: _overviewScrollController,
                         onOpen: _openConversation,
                       ),
                     ),
                     Positioned(
-                      left: workspaceLeft,
+                      left: conversationLeft,
                       top: 0,
                       bottom: 0,
-                      width: width,
+                      width: width - _chatRailWidth,
                       child: _FocusedChatWorkspace(
                         conversations: _conversations,
                         activeIndex: _activeConversation,
-                        avatarPromotion: _avatarPromotion.value,
-                        overviewScrollOffset: scrollOffset,
                         composerController: _composerController,
                         onBack: _closeConversation,
-                        onSelect: _onRailTap,
                         onSend: _sendMessage,
                       ),
                     ),
+                    if (progress > 0 || _avatarPromotion.value > 0)
+                      Positioned(
+                        key: const Key('selected-avatar-foreground'),
+                        left: _selectedAvatarLeft(
+                          overviewWidth: overviewCardWidth,
+                          overviewLeft: overviewLeft,
+                          transitionProgress: progress,
+                          transitionTravel: initialWorkspaceLeft,
+                        ),
+                        top: _lerp(
+                          _overviewHeaderHeight +
+                              _activeConversation * _conversationRowHeight +
+                              (_conversationRowHeight - 50) / 2 -
+                              scrollOffset,
+                          10,
+                          Curves.easeOutCubic.transform(_avatarPromotion.value),
+                        ),
+                        width: 50,
+                        child: _ConversationAvatar(
+                          key: Key(
+                            'rail-${_conversations[_activeConversation].id}',
+                          ),
+                          conversation: _conversations[_activeConversation],
+                          selected: true,
+                          onTap: () => _onRailTap(_activeConversation),
+                        ),
+                      ),
                   ],
                 ),
               );
@@ -220,25 +319,35 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 class _ChatOverview extends StatelessWidget {
   const _ChatOverview({
     required this.conversations,
+    required this.activeIndex,
+    required this.transitionProgress,
+    required this.avatarPromotion,
+    required this.transitionTravel,
     required this.scrollController,
     required this.onOpen,
+    this.highlightActive = false,
   });
 
   final List<_Conversation> conversations;
+  final int activeIndex;
+  final double transitionProgress;
+  final double avatarPromotion;
+  final double transitionTravel;
   final ScrollController scrollController;
   final ValueChanged<int> onOpen;
+  final bool highlightActive;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Theme.of(context).colorScheme.surface,
+      color: Theme.of(context).scaffoldBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             height: _overviewHeaderHeight,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 4, 8),
+              padding: const EdgeInsets.fromLTRB(18, 14, _chatRailWidth + 8, 8),
               child: Row(
                 children: [
                   Expanded(
@@ -251,11 +360,22 @@ class _ChatOverview extends StatelessWidget {
                     tooltip: 'Search',
                     onPressed: () {},
                     icon: const Icon(Icons.search),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainer,
+                    ),
                   ),
+                  const SizedBox(width: 6),
                   IconButton(
                     tooltip: 'New chat',
                     onPressed: () {},
                     icon: const Icon(Icons.edit_square),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainer,
+                    ),
                   ),
                 ],
               ),
@@ -269,10 +389,26 @@ class _ChatOverview extends StatelessWidget {
               itemCount: conversations.length,
               itemBuilder: (context, index) {
                 final conversation = conversations[index];
-                return _ConversationRow(
-                  key: Key('conversation-row-$index'),
-                  conversation: conversation,
-                  onTap: () => onOpen(index),
+                final delayedProgress = _delayedSelectedProgress(
+                  transitionProgress,
+                );
+                final selectedLag =
+                    transitionTravel * (transitionProgress - delayedProgress);
+                return Transform.translate(
+                  offset: index == activeIndex
+                      ? Offset(selectedLag, 0)
+                      : Offset.zero,
+                  child: _ConversationRow(
+                    key: Key('conversation-row-$index'),
+                    conversation: conversation,
+                    selected:
+                        index == activeIndex &&
+                        (highlightActive || transitionProgress > 0.02),
+                    avatarVisible:
+                        index != activeIndex ||
+                        (transitionProgress == 0 && avatarPromotion == 0),
+                    onTap: () => onOpen(index),
+                  ),
                 );
               },
             ),
@@ -287,48 +423,114 @@ class _ConversationRow extends StatelessWidget {
   const _ConversationRow({
     super.key,
     required this.conversation,
+    required this.selected,
+    required this.avatarVisible,
     required this.onTap,
   });
 
   final _Conversation conversation;
+  final bool selected;
+  final bool avatarVisible;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Theme.of(context).dividerColor),
-        ),
-      ),
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                conversation.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              elevation: 0.5,
+              shadowColor: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: BorderSide(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outline.withValues(alpha: 0.32),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 0, 12),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 72,
+                        child: Text(
+                          conversation.time,
+                          key: Key('conversation-time-${conversation.id}'),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              conversation.name,
+                              key: Key('conversation-name-${conversation.id}'),
+                              maxLines: 1,
+                              textAlign: TextAlign.end,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              conversation.preview,
+                              key: Key(
+                                'conversation-preview-${conversation.id}',
+                              ),
+                              maxLines: 1,
+                              textAlign: TextAlign.end,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: _chatRailWidth + 6),
+                    ],
+                  ),
+                ),
               ),
             ),
-            Text(
-              conversation.time,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            conversation.preview,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
-      ),
+        if (avatarVisible)
+          Positioned(
+            right: 7,
+            top: (_conversationRowHeight - 50) / 2,
+            width: 50,
+            child: _ConversationAvatar(
+              key: Key('rail-${conversation.id}'),
+              conversation: conversation,
+              selected: selected,
+              onTap: onTap,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -337,115 +539,40 @@ class _FocusedChatWorkspace extends StatelessWidget {
   const _FocusedChatWorkspace({
     required this.conversations,
     required this.activeIndex,
-    required this.avatarPromotion,
-    required this.overviewScrollOffset,
     required this.composerController,
     required this.onBack,
-    required this.onSelect,
     required this.onSend,
+    this.showBackButton = true,
+    this.onToggleList,
+    this.listVisible = true,
   });
 
   final List<_Conversation> conversations;
   final int activeIndex;
-  final double avatarPromotion;
-  final double overviewScrollOffset;
   final TextEditingController composerController;
   final VoidCallback onBack;
-  final ValueChanged<int> onSelect;
   final VoidCallback onSend;
+  final bool showBackButton;
+  final VoidCallback? onToggleList;
+  final bool listVisible;
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-      child: Row(
-        children: [
-          _SharedConversationRail(
-            key: const Key('neighbor-chat-rail'),
-            conversations: conversations,
-            activeIndex: activeIndex,
-            avatarPromotion: avatarPromotion,
-            overviewScrollOffset: overviewScrollOffset,
-            onSelect: onSelect,
-          ),
-          Expanded(
-            child: ClipRect(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 160),
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                child: _ConversationView(
-                  key: Key(
-                    'conversation-view-${conversations[activeIndex].id}',
-                  ),
-                  conversation: conversations[activeIndex],
-                  composerController: composerController,
-                  onBack: onBack,
-                  onSend: onSend,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SharedConversationRail extends StatelessWidget {
-  const _SharedConversationRail({
-    super.key,
-    required this.conversations,
-    required this.activeIndex,
-    required this.avatarPromotion,
-    required this.overviewScrollOffset,
-    required this.onSelect,
-  });
-
-  final List<_Conversation> conversations;
-  final int activeIndex;
-  final double avatarPromotion;
-  final double overviewScrollOffset;
-  final ValueChanged<int> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final promotion = Curves.easeOutCubic.transform(avatarPromotion);
-    const rowAvatarInset = (_conversationRowHeight - 50) / 2;
-
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-      child: SizedBox(
-        width: _chatRailWidth,
-        child: ClipRect(
-          child: Stack(
-            children: [
-              for (var index = 0; index < conversations.length; index++)
-                Positioned(
-                  left: 4,
-                  top: index == activeIndex
-                      ? _lerp(
-                          _overviewHeaderHeight +
-                              index * _conversationRowHeight +
-                              rowAvatarInset -
-                              overviewScrollOffset,
-                          10,
-                          promotion,
-                        )
-                      : _overviewHeaderHeight +
-                            index * _conversationRowHeight +
-                            rowAvatarInset -
-                            overviewScrollOffset,
-                  width: 50,
-                  child: _RailConversationButton(
-                    conversation: conversations[index],
-                    selected: index == activeIndex,
-                    onTap: () => onSelect(index),
-                  ),
-                ),
-            ],
-          ),
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 160),
+        transitionBuilder: (child, animation) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        child: _ConversationView(
+          key: Key('conversation-view-${conversations[activeIndex].id}'),
+          conversation: conversations[activeIndex],
+          composerController: composerController,
+          onBack: onBack,
+          onSend: onSend,
+          showBackButton: showBackButton,
+          onToggleList: onToggleList,
+          listVisible: listVisible,
         ),
       ),
     );
@@ -455,8 +582,24 @@ class _SharedConversationRail extends StatelessWidget {
 double _lerp(double start, double end, double progress) =>
     start + (end - start) * progress;
 
-class _RailConversationButton extends StatelessWidget {
-  const _RailConversationButton({
+double _delayedSelectedProgress(double progress) =>
+    ((progress - 0.14) / 0.86).clamp(0.0, 1.0);
+
+double _selectedAvatarLeft({
+  required double overviewWidth,
+  required double overviewLeft,
+  required double transitionProgress,
+  required double transitionTravel,
+}) {
+  final selectedLag =
+      transitionTravel *
+      (transitionProgress - _delayedSelectedProgress(transitionProgress));
+  return overviewLeft + selectedLag + overviewWidth - 57;
+}
+
+class _ConversationAvatar extends StatelessWidget {
+  const _ConversationAvatar({
+    super.key,
     required this.conversation,
     required this.selected,
     required this.onTap,
@@ -472,7 +615,6 @@ class _RailConversationButton extends StatelessWidget {
       button: true,
       label: 'Open ${conversation.name}',
       child: InkWell(
-        key: Key('rail-${conversation.id}'),
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: SizedBox(
@@ -497,7 +639,9 @@ class _RailConversationButton extends StatelessWidget {
                 child: _InitialsAvatar(
                   initials: conversation.initials,
                   diameter: selected ? 42 : 40,
-                  backgroundColor: Theme.of(context).colorScheme.surface,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHigh,
                 ),
               ),
               if (conversation.unreadCount > 0)
@@ -521,12 +665,18 @@ class _ConversationView extends StatelessWidget {
     required this.composerController,
     required this.onBack,
     required this.onSend,
+    required this.showBackButton,
+    required this.onToggleList,
+    required this.listVisible,
   });
 
   final _Conversation conversation;
   final TextEditingController composerController;
   final VoidCallback onBack;
   final VoidCallback onSend;
+  final bool showBackButton;
+  final VoidCallback? onToggleList;
+  final bool listVisible;
 
   @override
   Widget build(BuildContext context) {
@@ -538,12 +688,24 @@ class _ConversationView extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
             child: Row(
               children: [
-                IconButton(
-                  key: const Key('close-conversation'),
-                  tooltip: 'All chats',
-                  onPressed: onBack,
-                  icon: const Icon(Icons.arrow_back),
-                ),
+                if (showBackButton)
+                  IconButton(
+                    key: const Key('close-conversation'),
+                    tooltip: 'All chats',
+                    onPressed: onBack,
+                    icon: const Icon(Icons.arrow_back),
+                  )
+                else
+                  IconButton(
+                    key: const Key('desktop-chat-list-toggle'),
+                    tooltip: listVisible ? 'Hide chat list' : 'Show chat list',
+                    onPressed: onToggleList,
+                    icon: Icon(
+                      listVisible
+                          ? Icons.menu_open_rounded
+                          : Icons.menu_rounded,
+                    ),
+                  ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
