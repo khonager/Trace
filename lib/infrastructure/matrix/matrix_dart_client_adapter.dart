@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
+import 'package:matrix/encryption.dart' as encryption;
 import 'package:matrix/matrix.dart' as matrix;
 import 'package:matrix/encryption/utils/crypto_setup_extension.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
@@ -19,6 +20,10 @@ matrix.Client createMatrixDartClient({
       matrix.AuthenticationTypes.sso,
       matrix.AuthenticationTypes.token,
     },
+    verificationMethods: const {
+      encryption.KeyVerificationMethod.emoji,
+      encryption.KeyVerificationMethod.numbers,
+    },
     nativeImplementations: matrix.NativeImplementationsIsolate(
       compute,
       vodozemacInit: initializeMatrixCrypto,
@@ -32,7 +37,10 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   final matrix.Client _client;
   final StreamController<MatrixClientSnapshot> _snapshots =
       StreamController.broadcast();
+  final StreamController<MatrixVerificationPort> _verificationRequests =
+      StreamController.broadcast();
   final Map<String, _MatrixDartTimeline> _timelines = {};
+  final Set<_MatrixDartVerification> _verifications = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   MatrixClientSnapshot _current = const MatrixClientSnapshot.starting();
   MatrixConnectionPhase _connectionPhase = MatrixConnectionPhase.starting;
@@ -46,6 +54,10 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   Stream<MatrixClientSnapshot> get snapshots => _snapshots.stream;
 
   @override
+  Stream<MatrixVerificationPort> get verificationRequests =>
+      _verificationRequests.stream;
+
+  @override
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
@@ -53,6 +65,12 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       _client.onSync.stream.listen((_) => _publish()),
       _client.onSyncStatus.stream.listen(_handleSyncStatus),
       _client.onLoginStateChanged.stream.listen(_handleLoginState),
+      _client.onKeyVerificationRequest.stream.listen((request) {
+        final verification = _wrapVerification(request);
+        if (!_verificationRequests.isClosed) {
+          _verificationRequests.add(verification);
+        }
+      }),
     ]);
 
     try {
@@ -346,6 +364,34 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   }
 
   @override
+  Future<MatrixVerificationPort> startDeviceVerification(
+    String deviceId,
+  ) async {
+    final userId = _client.userID;
+    if (userId == null) throw Exception('Sign in before verifying a device.');
+    var key = _client.userDeviceKeys[userId]?.deviceKeys[deviceId];
+    if (key == null) {
+      await _client.updateUserDeviceKeys(additionalUsers: {userId});
+      key = _client.userDeviceKeys[userId]?.deviceKeys[deviceId];
+    }
+    if (key == null) {
+      throw Exception('That Matrix device is no longer available.');
+    }
+    return _wrapVerification(await key.startVerification());
+  }
+
+  _MatrixDartVerification _wrapVerification(
+    encryption.KeyVerification request,
+  ) {
+    final verification = _MatrixDartVerification(
+      request,
+      onClose: (verification) => _verifications.remove(verification),
+    );
+    _verifications.add(verification);
+    return verification;
+  }
+
+  @override
   Future<void> setForeground(bool foreground) async {
     _client.backgroundSync = foreground;
     if (foreground && _client.isLogged()) {
@@ -493,8 +539,112 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
+    for (final verification in _verifications.toList()) {
+      await verification.close();
+    }
     await _client.dispose();
     await _snapshots.close();
+    await _verificationRequests.close();
+  }
+}
+
+final class _MatrixDartVerification implements MatrixVerificationPort {
+  _MatrixDartVerification(
+    this._request, {
+    required void Function(_MatrixDartVerification verification) onClose,
+  }) : _onClose = onClose {
+    _request.onUpdate = _emit;
+  }
+
+  final encryption.KeyVerification _request;
+  final void Function(_MatrixDartVerification verification) _onClose;
+  final StreamController<MatrixVerificationSnapshot> _updates =
+      StreamController.broadcast();
+  bool _closed = false;
+
+  @override
+  MatrixVerificationSnapshot get current {
+    final comparing =
+        _request.state == encryption.KeyVerificationState.askSas;
+    final sasTypes = comparing ? _request.sasTypes : const <String>[];
+    final phase = switch (_request.state) {
+      encryption.KeyVerificationState.askAccept =>
+        MatrixVerificationPhase.requested,
+      encryption.KeyVerificationState.askChoice =>
+        MatrixVerificationPhase.chooseMethod,
+      encryption.KeyVerificationState.askSas => MatrixVerificationPhase.compare,
+      encryption.KeyVerificationState.askSSSS =>
+        MatrixVerificationPhase.needsRecovery,
+      encryption.KeyVerificationState.done => MatrixVerificationPhase.done,
+      encryption.KeyVerificationState.error when _request.canceled =>
+        MatrixVerificationPhase.cancelled,
+      encryption.KeyVerificationState.error => MatrixVerificationPhase.error,
+      encryption.KeyVerificationState.waitingAccept ||
+      encryption.KeyVerificationState.waitingSas ||
+      encryption.KeyVerificationState.showQRSuccess ||
+      encryption.KeyVerificationState.confirmQRScan =>
+        MatrixVerificationPhase.waiting,
+    };
+    return MatrixVerificationSnapshot(
+      phase: phase,
+      userId: _request.userId,
+      deviceId: _request.deviceId,
+      emojis: sasTypes.contains('emoji')
+          ? _request.sasEmojis
+                .map(
+                  (emoji) => MatrixVerificationEmoji(
+                    symbol: emoji.emoji,
+                    name: emoji.name,
+                  ),
+                )
+                .toList(growable: false)
+          : const [],
+      numbers: sasTypes.contains('decimal')
+          ? _request.sasNumbers
+          : const [],
+      message: _request.canceledReason,
+    );
+  }
+
+  @override
+  Stream<MatrixVerificationSnapshot> get updates => _updates.stream;
+
+  void _emit() {
+    if (!_closed) _updates.add(current);
+  }
+
+  @override
+  Future<void> acceptRequest() => _request.acceptVerification();
+
+  @override
+  Future<void> startEmojiComparison() =>
+      _request.continueVerification(matrix.EventTypes.Sas);
+
+  @override
+  Future<void> confirmMatch() => _request.acceptSas();
+
+  @override
+  Future<void> reject({bool mismatch = false}) async {
+    if (mismatch) {
+      await _request.rejectSas();
+    } else if (_request.state == encryption.KeyVerificationState.askAccept) {
+      await _request.rejectVerification();
+    } else if (!_request.isDone) {
+      await _request.cancel('m.user');
+    }
+  }
+
+  @override
+  Future<void> continueWithRecovery(String recoveryKeyOrPassphrase) =>
+      _request.openSSSS(keyOrPassphrase: recoveryKeyOrPassphrase);
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    _request.onUpdate = null;
+    _onClose(this);
+    await _updates.close();
   }
 }
 
@@ -536,7 +686,6 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   bool _shouldShow(matrix.Event event) =>
       event.type == matrix.EventTypes.Message ||
       event.type == matrix.EventTypes.Encrypted ||
-      event.type == matrix.EventTypes.RoomMember ||
       event.type == matrix.EventTypes.RoomName ||
       event.type == matrix.EventTypes.RoomTopic;
 
@@ -549,6 +698,11 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       senderName: event.senderFromMemoryOrFallback.calcDisplayname(),
       body: undecryptable
           ? 'Unable to decrypt this message. Restore your recovery key or request the room key.'
+          : system
+          ? event.calcLocalizedBodyFallback(
+              const matrix.MatrixDefaultLocalizations(),
+              plaintextBody: true,
+            )
           : event.plaintextBody,
       timestamp: event.originServerTs,
       sentByMe: event.senderId == _ownUserId,

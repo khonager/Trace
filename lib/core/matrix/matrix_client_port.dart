@@ -10,6 +10,8 @@ abstract interface class MatrixClientPort {
 
   Stream<MatrixClientSnapshot> get snapshots;
 
+  Stream<MatrixVerificationPort> get verificationRequests;
+
   Future<void> initialize();
 
   Future<void> login(MatrixLoginRequest request);
@@ -79,6 +81,8 @@ abstract interface class MatrixClientPort {
 
   Future<List<MatrixDevice>> getDevices();
 
+  Future<MatrixVerificationPort> startDeviceVerification(String deviceId);
+
   Future<void> setForeground(bool foreground);
 
   Future<void> close();
@@ -96,6 +100,24 @@ abstract interface class MatrixTimelinePort {
   Future<void> retry(String eventId);
 
   Future<void> redact(String eventId, {String? reason});
+
+  Future<void> close();
+}
+
+abstract interface class MatrixVerificationPort {
+  MatrixVerificationSnapshot get current;
+
+  Stream<MatrixVerificationSnapshot> get updates;
+
+  Future<void> acceptRequest();
+
+  Future<void> startEmojiComparison();
+
+  Future<void> confirmMatch();
+
+  Future<void> reject({bool mismatch = false});
+
+  Future<void> continueWithRecovery(String recoveryKeyOrPassphrase);
 
   Future<void> close();
 }
@@ -136,6 +158,17 @@ enum MatrixConnectionPhase {
 enum MatrixRoomMembership { joined, invited, left }
 
 enum MatrixMessageDelivery { sending, sent, failed, synced }
+
+enum MatrixVerificationPhase {
+  requested,
+  chooseMethod,
+  waiting,
+  compare,
+  needsRecovery,
+  done,
+  cancelled,
+  error,
+}
 
 final class MatrixClientSnapshot {
   const MatrixClientSnapshot({
@@ -246,6 +279,31 @@ final class MatrixDevice {
   final bool isCurrent;
   final bool verified;
   final DateTime? lastSeen;
+}
+
+final class MatrixVerificationEmoji {
+  const MatrixVerificationEmoji({required this.symbol, required this.name});
+
+  final String symbol;
+  final String name;
+}
+
+final class MatrixVerificationSnapshot {
+  const MatrixVerificationSnapshot({
+    required this.phase,
+    required this.userId,
+    this.deviceId,
+    this.emojis = const [],
+    this.numbers = const [],
+    this.message,
+  });
+
+  final MatrixVerificationPhase phase;
+  final String userId;
+  final String? deviceId;
+  final List<MatrixVerificationEmoji> emojis;
+  final List<int> numbers;
+  final String? message;
 }
 
 final class MatrixMessageSearchResult {

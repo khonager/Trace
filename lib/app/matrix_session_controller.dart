@@ -18,6 +18,11 @@ class MatrixSessionController extends ChangeNotifier
   final FlutterSecureStorage _secureStorage;
   final Map<String, String> _volatileStorage = {};
   StreamSubscription<MatrixClientSnapshot>? _subscription;
+  StreamSubscription<MatrixVerificationPort>? _verificationRequestSubscription;
+  StreamSubscription<MatrixVerificationSnapshot>? _verificationSubscription;
+  final List<MatrixVerificationPort> _verificationQueue = [];
+  MatrixVerificationPort? _activeVerification;
+  MatrixVerificationSnapshot? _verificationSnapshot;
   MatrixClientSnapshot _snapshot = const MatrixClientSnapshot.starting();
   bool _busy = false;
   String? _actionError;
@@ -28,6 +33,8 @@ class MatrixSessionController extends ChangeNotifier
   MatrixClientSnapshot get snapshot => _snapshot;
   bool get busy => _busy;
   String? get actionError => _actionError;
+  MatrixVerificationPort? get activeVerification => _activeVerification;
+  MatrixVerificationSnapshot? get verificationSnapshot => _verificationSnapshot;
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
@@ -35,6 +42,9 @@ class MatrixSessionController extends ChangeNotifier
       _snapshot = snapshot;
       if (!_disposed) notifyListeners();
     });
+    _verificationRequestSubscription = client.verificationRequests.listen(
+      _queueVerification,
+    );
     _linkSubscription = _appLinks.uriLinkStream.listen(
       _handleLoginCallback,
       onError: (Object error) {
@@ -118,8 +128,57 @@ class MatrixSessionController extends ChangeNotifier
 
   Future<void> logout() => _perform(() async {
     await client.logout();
+    await _clearVerifications();
     await _deleteHint('last_user');
   });
+
+  Future<void> startDeviceVerification(String deviceId) async {
+    final verification = await client.startDeviceVerification(deviceId);
+    _queueVerification(verification);
+  }
+
+  void _queueVerification(MatrixVerificationPort verification) {
+    if (_activeVerification == null) {
+      _showVerification(verification);
+    } else {
+      _verificationQueue.add(verification);
+    }
+  }
+
+  void _showVerification(MatrixVerificationPort verification) {
+    _activeVerification = verification;
+    _verificationSnapshot = verification.current;
+    _verificationSubscription = verification.updates.listen((snapshot) {
+      _verificationSnapshot = snapshot;
+      if (!_disposed) notifyListeners();
+    });
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> dismissVerification() async {
+    await _verificationSubscription?.cancel();
+    _verificationSubscription = null;
+    await _activeVerification?.close();
+    _activeVerification = null;
+    _verificationSnapshot = null;
+    if (_verificationQueue.isNotEmpty) {
+      _showVerification(_verificationQueue.removeAt(0));
+    } else if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _clearVerifications() async {
+    await _verificationSubscription?.cancel();
+    _verificationSubscription = null;
+    await _activeVerification?.close();
+    for (final verification in _verificationQueue) {
+      await verification.close();
+    }
+    _verificationQueue.clear();
+    _activeVerification = null;
+    _verificationSnapshot = null;
+  }
 
   Future<void> _perform(Future<void> Function() action) async {
     _busy = true;
@@ -199,6 +258,8 @@ class MatrixSessionController extends ChangeNotifier
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_subscription?.cancel());
+    unawaited(_verificationRequestSubscription?.cancel());
+    unawaited(_clearVerifications());
     unawaited(_linkSubscription?.cancel());
     unawaited(client.close());
     super.dispose();

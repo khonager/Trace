@@ -37,6 +37,13 @@ flutter run -d android
 flutter run -d chrome
 ```
 
+### Android with Obtainium
+
+[![Add Trace to Obtainium](https://img.shields.io/badge/Add%20to-Obtainium-4A90E2?logo=android&logoColor=white)](https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fadd%2Fhttps%3A%2F%2Fgithub.com%2Fkhonager%2FTrace)
+
+The button adds this GitHub repository as Trace's update source. Obtainium can
+install it as soon as an Android APK is attached to a GitHub Release.
+
 Web end-to-end encryption uses the checked-in vodozemac bundle in `web/pkg`.
 Deploy the web build over HTTPS. Hosts may also need COOP/COEP response headers
 for browsers that require cross-origin isolation for WebAssembly threads.
@@ -52,8 +59,8 @@ Password and browser SSO login, session restore, encrypted room history,
 pagination, text/file sending, invitations, room/user/cached-message search,
 room creation and joining, Saved Messages, basic message actions, typing,
 receipts, and encryption recovery are wired.
-Push notifications, polished media rendering, device verification UI,
-production signing/branding, and encrypted-at-rest browser storage remain open.
+Push notifications, polished media rendering, production signing/branding, QR
+verification, and encrypted-at-rest browser storage remain open.
 
 The Matrix SDK stores its native cache in SQLite and its web cache in IndexedDB.
 End-to-end encrypted event bodies remain ciphertext in that cache, but account

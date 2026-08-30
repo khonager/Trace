@@ -102,8 +102,17 @@ class SettingsPage extends StatelessWidget {
                             subtitle: Text(
                               device.verified
                                   ? 'Verified · ${device.id}'
+                                  : device.isCurrent
+                                  ? 'Not verified · Ask a trusted Matrix session to verify this device'
                                   : 'Not verified · ${device.id}',
                             ),
+                            trailing: !device.verified && !device.isCurrent
+                                ? TextButton(
+                                    onPressed: () =>
+                                        _startVerification(context, device.id),
+                                    child: const Text('Verify'),
+                                  )
+                                : null,
                           ),
                       ],
                     );
@@ -149,6 +158,14 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       );
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _startVerification(BuildContext context, String deviceId) async {
+    try {
+      await controller!.startDeviceVerification(deviceId);
     } catch (error) {
       if (context.mounted) _showError(context, error);
     }

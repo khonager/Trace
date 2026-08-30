@@ -3,6 +3,7 @@ import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/app/trace_home_shell.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/auth/presentation/login_page.dart';
+import 'package:trace/features/settings/presentation/matrix_verification_overlay.dart';
 
 /// Starts the replaceable Flutter shell.
 ///
@@ -85,6 +86,12 @@ class TraceApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFE9E9E6),
         useMaterial3: true,
       ),
+      builder: controller == null
+          ? null
+          : (context, child) => MatrixVerificationOverlay(
+              controller: controller!,
+              child: child ?? const SizedBox.shrink(),
+            ),
       home: controller == null
           ? const TraceHomeShell()
           : _SessionGate(controller: controller!),

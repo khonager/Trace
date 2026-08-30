@@ -67,8 +67,9 @@ client or a private self-room.
   - [x] Surface undecryptable events and recovery guidance honestly.
   - [x] Bootstrap cross-signing/key backup and restore with a recovery key or
         passphrase.
-  - [ ] Add interactive own-device verification and test recovery on a clean
-        second installation.
+  - [x] Add incoming and outgoing own-device verification with emoji/number
+        comparison.
+  - [ ] Add QR verification and test recovery on a clean second installation.
 - [x] **Rooms and people**
   - [x] Search Matrix users and start encrypted direct chats.
   - [x] Accept/decline invites and create encrypted groups or Saved Messages.
@@ -95,8 +96,9 @@ client or a private self-room.
 - [ ] Account and device settings.
   - [x] Account profile, device verification status, recovery setup/restore,
         and confirmed logout/local-session removal.
-  - [ ] Interactive device verification, session revocation, password changes,
-        and account deletion.
+  - [x] Interactive emoji/number device verification.
+  - [ ] QR verification, session revocation, password changes, and account
+        deletion.
 - [ ] Accessibility, keyboard navigation, screen-size coverage, localization
       groundwork, and useful loading/empty/error copy.
 - [ ] Privacy-safe diagnostics, sanitized logs, crash handling, rate-limit
