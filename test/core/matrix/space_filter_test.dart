@@ -9,6 +9,7 @@ void main() {
       bool space = false,
       List<String> children = const [],
       bool direct = false,
+      String? directUserId,
       bool pinned = false,
       double? pinOrder,
       int minute = 0,
@@ -21,6 +22,7 @@ void main() {
       unreadCount: 0,
       encrypted: true,
       isDirect: direct,
+      directUserId: directUserId,
       isSpace: space,
       childRoomIds: children,
       isPinned: pinned,
@@ -44,6 +46,31 @@ void main() {
       matrixChatRoomsForSpace(rooms, spaceId: 'root').map((room) => room.id),
       ['beta', 'alpha'],
     );
+  });
+
+  test('direct chats contain people but no groups or Saved Messages', () {
+    final now = DateTime(2026);
+    MatrixRoom room(String id, {bool direct = false, String? directUserId}) =>
+        MatrixRoom(
+          id: id,
+          name: id,
+          preview: '',
+          timestamp: now,
+          membership: MatrixRoomMembership.joined,
+          unreadCount: 0,
+          encrypted: true,
+          isDirect: direct,
+          directUserId: directUserId,
+        );
+
+    final rooms = [
+      room('person', direct: true, directUserId: '@alice:example.org'),
+      room('saved-messages'),
+      room('group'),
+      room('malformed-direct', direct: true),
+    ];
+
+    expect(matrixDirectChatRooms(rooms).map((room) => room.id), ['person']);
   });
 
   test('all chats put every ordered pinned chat before recent rooms', () {

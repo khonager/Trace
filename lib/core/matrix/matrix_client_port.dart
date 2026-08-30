@@ -312,6 +312,15 @@ List<MatrixRoom> matrixChatRoomsForSpace(
   return visibleRooms;
 }
 
+/// Returns only one-to-one rooms that identify another Matrix user.
+///
+/// Saved Messages and group rooms are deliberately excluded even if a client
+/// happens to give them direct-chat-like presentation metadata.
+List<MatrixRoom> matrixDirectChatRooms(List<MatrixRoom> rooms) =>
+    matrixChatRoomsForSpace(rooms)
+        .where((room) => room.isDirect && room.directUserId != null)
+        .toList(growable: false);
+
 final class MatrixMessage {
   const MatrixMessage({
     required this.eventId,

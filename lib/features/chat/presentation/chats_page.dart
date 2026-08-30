@@ -12,6 +12,7 @@ const double _conversationRowHeight = 92;
 const double _chatRailWidth = 64;
 const double _chatPeekWidth = 28;
 const double _desktopSplitBreakpoint = 900;
+const String _peopleContextId = 'trace:people';
 
 class ChatsPage extends StatefulWidget {
   const ChatsPage({super.key, this.client});
@@ -29,7 +30,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   late List<_Conversation> _conversations;
   List<MatrixRoom> _allRooms = const [];
   final Map<String, _Conversation> _conversationCache = {};
-  String? _selectedSpaceId;
+  String? _selectedContextId;
   List<String> _spaceOrder = const [];
   StreamSubscription<MatrixClientSnapshot>? _clientSubscription;
   final Map<String, MatrixTimelinePort> _timelines = {};
@@ -500,19 +501,20 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void _applyRooms(List<MatrixRoom> rooms) {
     _allRooms = rooms;
     final availableSpaceIds = _availableSpaces.map((space) => space.id).toSet();
-    if (_selectedSpaceId != null &&
-        !availableSpaceIds.contains(_selectedSpaceId)) {
-      _selectedSpaceId = null;
+    if (_selectedContextId != null &&
+        _selectedContextId != _peopleContextId &&
+        !availableSpaceIds.contains(_selectedContextId)) {
+      _selectedContextId = null;
     }
     final oldById = _conversationCache;
     final activeId = _conversations.isEmpty
         ? null
         : _conversations[_activeConversation].id;
     final updated = <_Conversation>[];
-    for (final room in matrixChatRoomsForSpace(
-      rooms,
-      spaceId: _selectedSpaceId,
-    )) {
+    final visibleRooms = _selectedContextId == _peopleContextId
+        ? matrixDirectChatRooms(rooms)
+        : matrixChatRoomsForSpace(rooms, spaceId: _selectedContextId);
+    for (final room in visibleRooms) {
       final existing = oldById[room.id];
       if (existing == null) {
         final conversation = _conversationFromRoom(room);
@@ -576,9 +578,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     return spaces;
   }
 
-  void _selectSpace(String? spaceId) {
-    if (_selectedSpaceId == spaceId) return;
-    _selectedSpaceId = spaceId;
+  void _selectContext(String? contextId) {
+    if (_selectedContextId == contextId) return;
+    _selectedContextId = contextId;
     _applyRooms(_allRooms);
   }
 
@@ -825,8 +827,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               child: _ChatOverview(
                 conversations: _conversations,
                 spaces: _availableSpaces,
-                selectedSpaceId: _selectedSpaceId,
-                onSpaceChanged: _selectSpace,
+                selectedContextId: _selectedContextId,
+                onContextChanged: _selectContext,
                 onReorderSpaces: _showSpaceOrder,
                 onTogglePinned: _togglePinned,
                 activeIndex: _activeConversation,
@@ -943,8 +945,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                       child: _ChatOverview(
                         conversations: _conversations,
                         spaces: _availableSpaces,
-                        selectedSpaceId: _selectedSpaceId,
-                        onSpaceChanged: _selectSpace,
+                        selectedContextId: _selectedContextId,
+                        onContextChanged: _selectContext,
                         onReorderSpaces: _showSpaceOrder,
                         onTogglePinned: _togglePinned,
                         activeIndex: _activeConversation,
@@ -1045,8 +1047,8 @@ class _ChatOverview extends StatelessWidget {
   const _ChatOverview({
     required this.conversations,
     required this.spaces,
-    required this.selectedSpaceId,
-    required this.onSpaceChanged,
+    required this.selectedContextId,
+    required this.onContextChanged,
     required this.onReorderSpaces,
     required this.onTogglePinned,
     required this.activeIndex,
@@ -1062,8 +1064,8 @@ class _ChatOverview extends StatelessWidget {
 
   final List<_Conversation> conversations;
   final List<MatrixRoom> spaces;
-  final String? selectedSpaceId;
-  final ValueChanged<String?> onSpaceChanged;
+  final String? selectedContextId;
+  final ValueChanged<String?> onContextChanged;
   final VoidCallback onReorderSpaces;
   final ValueChanged<_Conversation> onTogglePinned;
   final int activeIndex;
@@ -1109,6 +1111,20 @@ class _ChatOverview extends StatelessWidget {
                           ).colorScheme.surfaceContainer,
                         ),
                       ),
+                      if (spaces.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        IconButton(
+                          key: const Key('reorder-spaces'),
+                          tooltip: 'Order spaces',
+                          onPressed: onReorderSpaces,
+                          icon: const Icon(Icons.reorder_rounded),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainer,
+                          ),
+                        ),
+                      ],
                       const SizedBox(width: 6),
                       IconButton(
                         key: const Key('new-chat'),
@@ -1130,33 +1146,26 @@ class _ChatOverview extends StatelessWidget {
                       key: const Key('space-context-dock'),
                       scrollDirection: Axis.horizontal,
                       children: [
-                        ChoiceChip(
+                        _ChatContextTab(
                           key: const Key('all-chats-context'),
-                          selected: selectedSpaceId == null,
-                          onSelected: (_) => onSpaceChanged(null),
-                          avatar: const Icon(Icons.forum_outlined, size: 18),
-                          label: const Text('All'),
+                          selected: selectedContextId == null,
+                          onTap: () => onContextChanged(null),
+                          label: 'All',
+                        ),
+                        const SizedBox(width: 20),
+                        _ChatContextTab(
+                          key: const Key('people-chats-context'),
+                          selected: selectedContextId == _peopleContextId,
+                          onTap: () => onContextChanged(_peopleContextId),
+                          label: 'People',
                         ),
                         for (final space in spaces) ...[
-                          const SizedBox(width: 6),
-                          ChoiceChip(
+                          const SizedBox(width: 20),
+                          _ChatContextTab(
                             key: Key('space-context-${space.id}'),
-                            selected: selectedSpaceId == space.id,
-                            onSelected: (_) => onSpaceChanged(space.id),
-                            avatar: const Icon(
-                              Icons.workspaces_outline,
-                              size: 18,
-                            ),
-                            label: Text(space.name),
-                          ),
-                        ],
-                        if (spaces.isNotEmpty) ...[
-                          const SizedBox(width: 2),
-                          OutlinedButton.icon(
-                            key: const Key('reorder-spaces'),
-                            onPressed: onReorderSpaces,
-                            icon: const Icon(Icons.reorder, size: 18),
-                            label: const Text('Order'),
+                            selected: selectedContextId == space.id,
+                            onTap: () => onContextChanged(space.id),
+                            label: space.name,
                           ),
                         ],
                       ],
@@ -1203,6 +1212,52 @@ class _ChatOverview extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ChatContextTab extends StatelessWidget {
+  const _ChatContextTab({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.fromLTRB(2, 8, 2, 6),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: selected
+                ? Theme.of(context).colorScheme.onSurface
+                : Theme.of(context).colorScheme.onSurfaceVariant,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _ConversationRow extends StatelessWidget {
