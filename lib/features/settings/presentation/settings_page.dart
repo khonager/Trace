@@ -40,6 +40,51 @@ class SettingsPage extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Card(
+            child: ExpansionTile(
+              key: const Key('profile-switcher'),
+              leading: const Icon(Icons.switch_account_outlined),
+              title: const Text('Profiles'),
+              subtitle: Text(
+                '${controller!.savedProfiles.length} ${controller!.savedProfiles.length == 1 ? 'profile' : 'profiles'} on this device',
+              ),
+              children: [
+                for (final profile in controller!.savedProfiles)
+                  ListTile(
+                    key: Key('profile-${profile.id}'),
+                    leading: CircleAvatar(
+                      backgroundImage: profile.avatarUrl == null
+                          ? null
+                          : NetworkImage(profile.avatarUrl.toString()),
+                      child: profile.avatarUrl == null
+                          ? Text(_initials(profile.displayName))
+                          : null,
+                    ),
+                    title: Text(profile.displayName),
+                    subtitle: Text(profile.userId),
+                    trailing: profile.id == controller!.activeProfileId
+                        ? const Icon(Icons.check_circle)
+                        : const Icon(Icons.swap_horiz),
+                    onTap:
+                        profile.id == controller!.activeProfileId ||
+                            controller!.busy
+                        ? null
+                        : () => _switchProfile(context, profile.id),
+                  ),
+                const Divider(),
+                ListTile(
+                  key: const Key('add-profile'),
+                  leading: const Icon(Icons.person_add_alt_1_outlined),
+                  title: const Text('Add profile'),
+                  subtitle: const Text(
+                    'Keep another Matrix session ready for quick testing.',
+                  ),
+                  onTap: controller!.busy ? null : () => _addProfile(context),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
             child: Column(
               children: [
                 ListTile(
@@ -158,6 +203,22 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       );
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _switchProfile(BuildContext context, String profileId) async {
+    try {
+      await controller!.switchProfile(profileId);
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _addProfile(BuildContext context) async {
+    try {
+      await controller!.addProfile();
     } catch (error) {
       if (context.mounted) _showError(context, error);
     }

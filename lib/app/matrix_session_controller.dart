@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -12,10 +13,13 @@ class MatrixSessionController extends ChangeNotifier
   MatrixSessionController(
     this.client, {
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
-  }) : _secureStorage = secureStorage;
+    Future<MatrixClientPort> Function(String profileId)? clientFactory,
+  }) : _secureStorage = secureStorage,
+       _clientFactory = clientFactory;
 
-  final MatrixClientPort client;
+  MatrixClientPort client;
   final FlutterSecureStorage _secureStorage;
+  final Future<MatrixClientPort> Function(String profileId)? _clientFactory;
   final Map<String, String> _volatileStorage = {};
   StreamSubscription<MatrixClientSnapshot>? _subscription;
   StreamSubscription<MatrixVerificationPort>? _verificationRequestSubscription;
@@ -29,22 +33,35 @@ class MatrixSessionController extends ChangeNotifier
   bool _disposed = false;
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
+  List<MatrixSavedProfile> _savedProfiles = const [];
+  String _activeProfileId = 'default';
+  String? _returnProfileId;
+  bool _addingProfile = false;
 
   MatrixClientSnapshot get snapshot => _snapshot;
   bool get busy => _busy;
   String? get actionError => _actionError;
   MatrixVerificationPort? get activeVerification => _activeVerification;
   MatrixVerificationSnapshot? get verificationSnapshot => _verificationSnapshot;
+  List<MatrixSavedProfile> get savedProfiles => _savedProfiles;
+  String get activeProfileId => _activeProfileId;
+  bool get addingProfile => _addingProfile;
+  bool get canCancelProfileLogin =>
+      _addingProfile && _returnProfileId != null && _savedProfiles.isNotEmpty;
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
-    _subscription = client.snapshots.listen((snapshot) {
-      _snapshot = snapshot;
-      if (!_disposed) notifyListeners();
-    });
-    _verificationRequestSubscription = client.verificationRequests.listen(
-      _queueVerification,
-    );
+    await _loadProfiles();
+    final storedActive = await _readHint(key: 'active_profile_id');
+    if (storedActive != null &&
+        storedActive != _activeProfileId &&
+        _savedProfiles.any((profile) => profile.id == storedActive) &&
+        _clientFactory != null) {
+      await client.close();
+      client = await _clientFactory(storedActive);
+      _activeProfileId = storedActive;
+    }
+    _bindClient();
     _linkSubscription = _appLinks.uriLinkStream.listen(
       _handleLoginCallback,
       onError: (Object error) {
@@ -54,6 +71,7 @@ class MatrixSessionController extends ChangeNotifier
     );
     await client.initialize();
     _snapshot = client.current;
+    await _rememberCurrentAccount();
     try {
       final initialLink = await _appLinks.getInitialLink();
       if (initialLink != null) await _handleLoginCallback(initialLink);
@@ -61,6 +79,17 @@ class MatrixSessionController extends ChangeNotifier
       // Deep links are optional on platforms without an app-link handler.
     }
     notifyListeners();
+  }
+
+  void _bindClient() {
+    _subscription = client.snapshots.listen((snapshot) {
+      _snapshot = snapshot;
+      if (snapshot.account != null) unawaited(_rememberCurrentAccount());
+      if (!_disposed) notifyListeners();
+    });
+    _verificationRequestSubscription = client.verificationRequests.listen(
+      _queueVerification,
+    );
   }
 
   Future<void> beginSso(String homeserver) async {
@@ -123,14 +152,133 @@ class MatrixSessionController extends ChangeNotifier
       );
       await _writeHint(key: 'last_homeserver', value: homeserverUri.toString());
       await _writeHint(key: 'last_user', value: user.trim());
+      _addingProfile = false;
+      await _rememberCurrentAccount();
     });
   }
 
   Future<void> logout() => _perform(() async {
+    final removedId = _activeProfileId;
     await client.logout();
     await _clearVerifications();
+    _savedProfiles = _savedProfiles
+        .where((profile) => profile.id != removedId)
+        .toList(growable: false);
+    await _saveProfiles();
     await _deleteHint('last_user');
+    if (_savedProfiles.isNotEmpty && _clientFactory != null) {
+      await _activateProfile(_savedProfiles.first.id);
+    } else {
+      _addingProfile = false;
+      _returnProfileId = null;
+      await _deleteHint('active_profile_id');
+    }
   });
+
+  Future<void> addProfile() => _perform(() async {
+    if (_clientFactory == null) {
+      throw Exception('Multiple profiles are not available on this platform.');
+    }
+    _returnProfileId = _snapshot.account == null ? null : _activeProfileId;
+    _addingProfile = true;
+    final id = 'profile-${DateTime.now().microsecondsSinceEpoch}';
+    await _activateProfile(id, persistSelection: false);
+  });
+
+  Future<void> cancelProfileLogin() => _perform(() async {
+    final returnId = _returnProfileId;
+    if (!_addingProfile || returnId == null) return;
+    _addingProfile = false;
+    _returnProfileId = null;
+    await _activateProfile(returnId);
+  });
+
+  Future<void> switchProfile(String profileId) => _perform(() async {
+    if (profileId == _activeProfileId ||
+        !_savedProfiles.any((profile) => profile.id == profileId)) {
+      return;
+    }
+    _addingProfile = false;
+    _returnProfileId = null;
+    await _activateProfile(profileId);
+  });
+
+  Future<void> _activateProfile(
+    String profileId, {
+    bool persistSelection = true,
+  }) async {
+    final factory = _clientFactory;
+    if (factory == null) throw Exception('Profile switching is unavailable.');
+    _snapshot = const MatrixClientSnapshot.starting();
+    notifyListeners();
+    await _subscription?.cancel();
+    _subscription = null;
+    await _verificationRequestSubscription?.cancel();
+    _verificationRequestSubscription = null;
+    await _clearVerifications();
+    await client.close();
+    client = await factory(profileId);
+    _activeProfileId = profileId;
+    _bindClient();
+    await client.initialize();
+    _snapshot = client.current;
+    if (persistSelection) {
+      await _writeHint(key: 'active_profile_id', value: profileId);
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _loadProfiles() async {
+    final encoded = await _readHint(key: 'saved_profiles');
+    if (encoded == null || encoded.isEmpty) return;
+    try {
+      final values = jsonDecode(encoded) as List<dynamic>;
+      _savedProfiles = values
+          .whereType<Map<String, dynamic>>()
+          .map(MatrixSavedProfile.fromJson)
+          .toList(growable: false);
+    } catch (_) {
+      _savedProfiles = const [];
+    }
+  }
+
+  Future<void> _rememberCurrentAccount() async {
+    final account = client.current.account;
+    if (account == null) return;
+    final profile = MatrixSavedProfile(
+      id: _activeProfileId,
+      userId: account.userId,
+      displayName: account.displayName,
+      homeserver: account.homeserver,
+      avatarUrl: account.avatarUrl,
+    );
+    final existing = _savedProfiles
+        .where((saved) => saved.id == profile.id)
+        .firstOrNull;
+    final alreadyFirst =
+        _savedProfiles.isNotEmpty && _savedProfiles.first.id == profile.id;
+    if (alreadyFirst &&
+        existing?.userId == profile.userId &&
+        existing?.displayName == profile.displayName &&
+        existing?.homeserver == profile.homeserver &&
+        existing?.avatarUrl == profile.avatarUrl) {
+      return;
+    }
+    _savedProfiles = [
+      profile,
+      ..._savedProfiles.where((saved) => saved.id != profile.id),
+    ];
+    await _saveProfiles();
+    await _writeHint(key: 'active_profile_id', value: _activeProfileId);
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _saveProfiles() => _writeHint(
+    key: 'saved_profiles',
+    value: jsonEncode(
+      _savedProfiles.map((profile) => profile.toJson()).toList(),
+    ),
+  );
 
   Future<void> startDeviceVerification(String deviceId) async {
     final verification = await client.startDeviceVerification(deviceId);
@@ -264,4 +412,39 @@ class MatrixSessionController extends ChangeNotifier
     unawaited(client.close());
     super.dispose();
   }
+}
+
+final class MatrixSavedProfile {
+  const MatrixSavedProfile({
+    required this.id,
+    required this.userId,
+    required this.displayName,
+    required this.homeserver,
+    this.avatarUrl,
+  });
+
+  factory MatrixSavedProfile.fromJson(Map<String, dynamic> json) =>
+      MatrixSavedProfile(
+        id: json['id'] as String,
+        userId: json['userId'] as String,
+        displayName: json['displayName'] as String,
+        homeserver: Uri.parse(json['homeserver'] as String),
+        avatarUrl: json['avatarUrl'] == null
+            ? null
+            : Uri.parse(json['avatarUrl'] as String),
+      );
+
+  final String id;
+  final String userId;
+  final String displayName;
+  final Uri homeserver;
+  final Uri? avatarUrl;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'userId': userId,
+    'displayName': displayName,
+    'homeserver': homeserver.toString(),
+    'avatarUrl': avatarUrl?.toString(),
+  };
 }

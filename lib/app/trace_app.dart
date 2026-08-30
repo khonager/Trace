@@ -111,7 +111,10 @@ class _SessionGate extends StatelessWidget {
       builder: (context, _) {
         final snapshot = controller.snapshot;
         if (snapshot.isLoggedIn) {
-          return TraceHomeShell(controller: controller);
+          return TraceHomeShell(
+            key: ValueKey(controller.activeProfileId),
+            controller: controller,
+          );
         }
         if (snapshot.phase == MatrixConnectionPhase.starting) {
           return const Scaffold(

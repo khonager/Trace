@@ -8,5 +8,5 @@ import 'package:trace/infrastructure/matrix/matrix_database_factory_stub.dart'
 /// The Matrix SDK uses IndexedDB directly on web. Native targets receive a
 /// SQLite database and a private application-support directory for cached
 /// media. The SDK owns migrations and closes the store with the client.
-Future<matrix.DatabaseApi> openMatrixDatabase() =>
-    platform.openMatrixDatabase();
+Future<matrix.DatabaseApi> openMatrixDatabase({String profileId = 'default'}) =>
+    platform.openMatrixDatabase(profileId: profileId);

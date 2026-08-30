@@ -82,7 +82,9 @@ class _LoginPageState extends State<LoginPage> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          'Sign in to Matrix',
+                          widget.controller.addingProfile
+                              ? 'Add Matrix profile'
+                              : 'Sign in to Matrix',
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const SizedBox(height: 8),
@@ -179,6 +181,16 @@ class _LoginPageState extends State<LoginPage> {
                           icon: const Icon(Icons.open_in_browser),
                           label: const Text('Sign in with browser'),
                         ),
+                        if (widget.controller.canCancelProfileLogin) ...[
+                          const SizedBox(height: 10),
+                          TextButton(
+                            key: const Key('cancel-profile-login'),
+                            onPressed: widget.controller.busy
+                                ? null
+                                : widget.controller.cancelProfileLogin,
+                            child: const Text('Back to current profile'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
