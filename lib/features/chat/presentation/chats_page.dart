@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -376,6 +377,12 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     return timeline.downloadAttachment(eventId, thumbnail: thumbnail);
   }
 
+  Future<Uint8List> _loadMediaThumbnail(Uri uri) {
+    final client = widget.client;
+    if (client == null) throw StateError('Matrix media is not available.');
+    return client.downloadMediaThumbnail(uri);
+  }
+
   Future<void> _saveAttachment(_ChatMessage message) async {
     try {
       final attachment = await _loadAttachment(message);
@@ -577,10 +584,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   Future<void> _togglePinned(_Conversation conversation) async {
     final client = widget.client;
-    if (client == null || !conversation.isDirect) return;
+    if (client == null) return;
     final pinned = !conversation.isPinned;
     final pinnedRooms = _conversations
-        .where((room) => room.isDirect && room.isPinned)
+        .where((room) => room.isPinned)
         .toList(growable: false);
     final order = pinned
         ? ((pinnedRooms
@@ -856,7 +863,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onMessageLongPress: _showMessageActions,
               onRequestMessageKey: _requestMessageKey,
               onLoadAttachment: _loadAttachment,
+              onLoadMediaThumbnail: _loadMediaThumbnail,
               onSaveAttachment: _saveAttachment,
+              onTogglePinned: widget.client == null
+                  ? null
+                  : () => _togglePinned(_conversations[_activeConversation]),
               onLeave: widget.client == null ? null : _leaveCurrentRoom,
               replyLabel: _replyToLabel,
               attachmentBusy: _attachmentBusy,
@@ -963,7 +974,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onMessageLongPress: _showMessageActions,
                         onRequestMessageKey: _requestMessageKey,
                         onLoadAttachment: _loadAttachment,
+                        onLoadMediaThumbnail: _loadMediaThumbnail,
                         onSaveAttachment: _saveAttachment,
+                        onTogglePinned: widget.client == null
+                            ? null
+                            : () => _togglePinned(
+                                _conversations[_activeConversation],
+                              ),
                         onLeave: widget.client == null
                             ? null
                             : _leaveCurrentRoom,
@@ -1133,13 +1150,13 @@ class _ChatOverview extends StatelessWidget {
                             label: Text(space.name),
                           ),
                         ],
-                        if (spaces.length > 1) ...[
+                        if (spaces.isNotEmpty) ...[
                           const SizedBox(width: 2),
-                          IconButton(
+                          OutlinedButton.icon(
                             key: const Key('reorder-spaces'),
-                            tooltip: 'Reorder spaces',
                             onPressed: onReorderSpaces,
-                            icon: const Icon(Icons.swap_horiz),
+                            icon: const Icon(Icons.reorder, size: 18),
+                            label: const Text('Order'),
                           ),
                         ],
                       ],
@@ -1176,9 +1193,7 @@ class _ChatOverview extends StatelessWidget {
                         index != activeIndex ||
                         (transitionProgress == 0 && avatarPromotion == 0),
                     onTap: () => onOpen(index),
-                    onLongPress: conversation.isDirect
-                        ? () => onTogglePinned(conversation)
-                        : null,
+                    onLongPress: () => onTogglePinned(conversation),
                   ),
                 );
               },
@@ -1334,7 +1349,9 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
+    required this.onLoadMediaThumbnail,
     required this.onSaveAttachment,
+    required this.onTogglePinned,
     required this.onLeave,
     required this.replyLabel,
     required this.attachmentBusy,
@@ -1361,7 +1378,9 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<_ChatMessage> onRequestMessageKey;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final bool attachmentBusy;
@@ -1389,7 +1408,9 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onMessageLongPress: onMessageLongPress,
         onRequestMessageKey: onRequestMessageKey,
         onLoadAttachment: onLoadAttachment,
+        onLoadMediaThumbnail: onLoadMediaThumbnail,
         onSaveAttachment: onSaveAttachment,
+        onTogglePinned: onTogglePinned,
         onLeave: onLeave,
         replyLabel: replyLabel,
         attachmentBusy: attachmentBusy,
@@ -1501,7 +1522,9 @@ class _ConversationView extends StatelessWidget {
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
+    required this.onLoadMediaThumbnail,
     required this.onSaveAttachment,
+    required this.onTogglePinned,
     required this.onLeave,
     required this.replyLabel,
     required this.attachmentBusy,
@@ -1527,7 +1550,9 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<_ChatMessage> onRequestMessageKey;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final bool attachmentBusy;
@@ -1611,21 +1636,39 @@ class _ConversationView extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (onLeave != null)
+                if (onTogglePinned != null || onLeave != null)
                   PopupMenuButton<String>(
+                    key: Key('room-actions-${conversation.id}'),
                     tooltip: 'Room actions',
                     onSelected: (value) {
+                      if (value == 'pin') onTogglePinned?.call();
                       if (value == 'leave') onLeave!();
                     },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: 'leave',
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.logout),
-                          title: Text('Leave room'),
+                    itemBuilder: (context) => [
+                      if (onTogglePinned != null)
+                        PopupMenuItem(
+                          value: 'pin',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              conversation.isPinned
+                                  ? Icons.push_pin_outlined
+                                  : Icons.push_pin,
+                            ),
+                            title: Text(
+                              conversation.isPinned ? 'Unpin chat' : 'Pin chat',
+                            ),
+                          ),
                         ),
-                      ),
+                      if (onLeave != null)
+                        const PopupMenuItem(
+                          value: 'leave',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.logout),
+                            title: Text('Leave room'),
+                          ),
+                        ),
                     ],
                   ),
               ],
@@ -1687,6 +1730,7 @@ class _ConversationView extends StatelessWidget {
                           conversation.messages[index],
                           thumbnail: true,
                         ),
+                        onLoadMediaThumbnail: onLoadMediaThumbnail,
                         onSaveAttachment: () =>
                             onSaveAttachment(conversation.messages[index]),
                       );
@@ -1892,6 +1936,7 @@ class _MessageBubble extends StatefulWidget {
     required this.onLongPress,
     required this.onRequestKey,
     required this.onLoadAttachment,
+    required this.onLoadMediaThumbnail,
     required this.onSaveAttachment,
   });
 
@@ -1900,6 +1945,7 @@ class _MessageBubble extends StatefulWidget {
   final VoidCallback onLongPress;
   final VoidCallback onRequestKey;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final VoidCallback onSaveAttachment;
 
   @override
@@ -1942,7 +1988,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (showSender) ...[
-            _MessageSenderAvatar(message: widget.message),
+            _MessageSenderAvatar(
+              message: widget.message,
+              onLoadMediaThumbnail: widget.onLoadMediaThumbnail,
+            ),
             const SizedBox(width: 7),
           ],
           Flexible(
@@ -2104,22 +2153,75 @@ class _MessageBubbleState extends State<_MessageBubble> {
   }
 }
 
-class _MessageSenderAvatar extends StatelessWidget {
-  const _MessageSenderAvatar({required this.message});
+class _MessageSenderAvatar extends StatefulWidget {
+  const _MessageSenderAvatar({
+    required this.message,
+    required this.onLoadMediaThumbnail,
+  });
 
   final _ChatMessage message;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 2),
-    child: _InitialsAvatar(
-      key: Key('message-sender-avatar-${message.eventId ?? message.senderId}'),
-      initials: _initialsFor(message.senderName ?? message.senderId),
-      imageUrl: message.senderAvatarUrl,
+  State<_MessageSenderAvatar> createState() => _MessageSenderAvatarState();
+}
+
+class _MessageSenderAvatarState extends State<_MessageSenderAvatar> {
+  Future<Uint8List>? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageSenderAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.senderAvatarUrl != widget.message.senderAvatarUrl) {
+      _load();
+    }
+  }
+
+  void _load() {
+    final uri = widget.message.senderAvatarUrl;
+    _image = uri == null ? null : widget.onLoadMediaThumbnail(uri);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _InitialsFallback(
+      initials: _initialsFor(
+        widget.message.senderName ?? widget.message.senderId,
+      ),
       diameter: 30,
       backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
-    ),
-  );
+    );
+    return Padding(
+      key: Key(
+        'message-sender-avatar-${widget.message.eventId ?? widget.message.senderId}',
+      ),
+      padding: const EdgeInsets.only(top: 2),
+      child: _image == null
+          ? fallback
+          : FutureBuilder<Uint8List>(
+              future: _image,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return fallback;
+                return ClipOval(
+                  child: Image.memory(
+                    snapshot.data!,
+                    width: 30,
+                    height: 30,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.medium,
+                    errorBuilder: (_, _, _) => fallback,
+                  ),
+                );
+              },
+            ),
+    );
+  }
 }
 
 class _ImageAttachment extends StatelessWidget {

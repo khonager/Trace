@@ -163,7 +163,6 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     timeline = _MatrixDartTimeline(
       timeline: sdkTimeline,
       ownUserId: _client.userID ?? '',
-      mediaUrl: (mxc) => _mediaUrl(mxc, width: 96, height: 96),
       onClose: () => _timelines.remove(roomId),
     );
     _timelines[roomId] = timeline;
@@ -353,6 +352,28 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     await _client.setAccountData(userId, _spaceOrderEventType, {
       'room_ids': spaceIds,
     });
+  }
+
+  @override
+  Future<Uint8List> downloadMediaThumbnail(
+    Uri mxcUri, {
+    int width = 96,
+    int height = 96,
+  }) async {
+    if (!mxcUri.isScheme('mxc') || mxcUri.host.isEmpty) {
+      throw Exception('Invalid Matrix media URI.');
+    }
+    final mediaId = mxcUri.pathSegments.join('/');
+    if (mediaId.isEmpty) throw Exception('Invalid Matrix media URI.');
+    final response = await _client.getContentThumbnail(
+      mxcUri.host,
+      mediaId,
+      width,
+      height,
+      method: matrix.Method.scale,
+      animated: true,
+    );
+    return response.data;
   }
 
   @override
@@ -719,17 +740,16 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   _MatrixDartTimeline({
     required matrix.Timeline timeline,
     required String ownUserId,
-    required Uri? Function(Uri? mxc) mediaUrl,
     required void Function() onClose,
   }) : _timeline = timeline,
        _ownUserId = ownUserId,
-       _mediaUrl = mediaUrl,
        _onClose = onClose;
 
   final matrix.Timeline _timeline;
   final String _ownUserId;
-  final Uri? Function(Uri? mxc) _mediaUrl;
   final void Function() _onClose;
+  final Map<String, _TimelineSender> _senders = {};
+  final Set<String> _senderLoads = {};
   final StreamController<List<MatrixMessage>> _updates =
       StreamController.broadcast();
   List<MatrixMessage> _current = const [];
@@ -763,11 +783,13 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     final undecryptable = event.type == matrix.EventTypes.Encrypted;
     final system = event.type != matrix.EventTypes.Message && !undecryptable;
     final sender = event.senderFromMemoryOrFallback;
+    final loadedSender = _senders[event.senderId];
+    if (_senderLoads.add(event.senderId)) unawaited(_loadSender(event));
     return MatrixMessage(
       eventId: event.eventId,
       senderId: event.senderId,
-      senderName: sender.calcDisplayname(),
-      senderAvatarUrl: _mediaUrl(sender.avatarUrl),
+      senderName: loadedSender?.name ?? sender.calcDisplayname(),
+      senderAvatarUrl: loadedSender?.avatarUrl ?? sender.avatarUrl,
       body: undecryptable
           ? 'Unable to decrypt this message.'
           : system
@@ -801,6 +823,21 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       canRequestKey:
           undecryptable && event.content['can_request_session'] == true,
     );
+  }
+
+  Future<void> _loadSender(matrix.Event event) async {
+    try {
+      final sender = await event.fetchSenderUser();
+      if (sender == null || _closed) return;
+      _senders[event.senderId] = _TimelineSender(
+        name: sender.calcDisplayname(),
+        avatarUrl: sender.avatarUrl,
+      );
+      refresh();
+    } catch (_) {
+      // The synchronous room-member fallback remains usable when profile
+      // lookup is unavailable or the sender has left the room.
+    }
   }
 
   @override
@@ -878,4 +915,11 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     _onClose();
     await _updates.close();
   }
+}
+
+final class _TimelineSender {
+  const _TimelineSender({required this.name, this.avatarUrl});
+
+  final String name;
+  final Uri? avatarUrl;
 }

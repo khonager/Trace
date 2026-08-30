@@ -46,7 +46,7 @@ void main() {
     );
   });
 
-  test('all chats put ordered pinned DMs before recent rooms', () {
+  test('all chats put every ordered pinned chat before recent rooms', () {
     final now = DateTime(2026);
     MatrixRoom room(
       String id, {
@@ -70,12 +70,12 @@ void main() {
     final rooms = [
       room('recent', timestamp: now.add(const Duration(hours: 3))),
       room('pin-2', timestamp: now, direct: true, pinned: true, pinOrder: .8),
-      room('pin-1', timestamp: now, direct: true, pinned: true, pinOrder: .2),
+      room('saved-messages', timestamp: now, pinned: true, pinOrder: .2),
       room('older', timestamp: now),
     ];
 
     expect(matrixChatRoomsForSpace(rooms).map((room) => room.id), [
-      'pin-1',
+      'saved-messages',
       'pin-2',
       'recent',
       'older',

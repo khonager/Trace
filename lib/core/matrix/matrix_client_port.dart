@@ -83,6 +83,12 @@ abstract interface class MatrixClientPort {
 
   Future<void> setSpaceOrder(List<String> spaceIds);
 
+  Future<Uint8List> downloadMediaThumbnail(
+    Uri mxcUri, {
+    int width = 96,
+    int height = 96,
+  });
+
   Future<String> initializeRecovery(String passphrase);
 
   Future<void> restoreRecovery(String passphraseOrRecoveryKey);
@@ -273,8 +279,8 @@ List<MatrixRoom> matrixChatRoomsForSpace(
   if (spaceId == null) {
     final chats = rooms.where((room) => !room.isSpace).toList(growable: false);
     chats.sort((a, b) {
-      final aPinned = a.isDirect && a.isPinned;
-      final bPinned = b.isDirect && b.isPinned;
+      final aPinned = a.isPinned;
+      final bPinned = b.isPinned;
       if (aPinned != bPinned) return aPinned ? -1 : 1;
       if (aPinned) {
         final order = (a.pinOrder ?? 1).compareTo(b.pinOrder ?? 1);
