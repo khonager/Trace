@@ -42,7 +42,7 @@ void main() {
     );
   });
 
-  testWidgets('desktop chat backgrounds use a sustained crossfade', (
+  testWidgets('desktop chat taps use a short background crossfade', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -52,18 +52,7 @@ void main() {
 
     await tester.pumpWidget(const TraceApp());
     await tester.tap(find.byKey(const Key('conversation-row-1')));
-    await tester.pump(const Duration(milliseconds: 120));
-
-    expect(
-      find.byKey(const Key('conversation-background-canvas-maya')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('conversation-background-canvas-kai')),
-      findsOneWidget,
-    );
-
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 80));
 
     expect(
       find.byKey(const Key('conversation-background-canvas-maya')),
@@ -83,6 +72,43 @@ void main() {
       find.byKey(const Key('conversation-background-canvas-kai')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('dragging a chat manually reveals its background', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('conversation-row-1'))),
+    );
+    await gesture.moveBy(const Offset(-45, 0));
+    await tester.pump();
+
+    final revealFinder = find.byKey(const Key('manual-background-reveal-kai'));
+    expect(revealFinder, findsOneWidget);
+    expect(
+      find.byKey(const Key('conversation-background-canvas-maya')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('conversation-background-canvas-kai')),
+      findsOneWidget,
+    );
+
+    final firstOpacity = tester.widget<Opacity>(revealFinder).opacity;
+
+    await gesture.moveBy(const Offset(-400, 0));
+    await tester.pump();
+
+    final secondOpacity = tester.widget<Opacity>(revealFinder).opacity;
+    expect(secondOpacity, greaterThan(firstOpacity));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('conversation-title-kai')), findsOneWidget);
+    expect(revealFinder, findsNothing);
   });
 
   testWidgets('bottom toolbar switches between pages', (tester) async {

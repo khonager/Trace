@@ -1,12 +1,18 @@
 # Design QA
 
+Final result: passed
+
 ## Background switching
 
-- Chat backgrounds now use a 900 ms symmetric ease-in-out dissolve.
-- Only the background participates in the long transition, so the title,
-  messages, and composer react immediately to a chat selection.
-- The widget test keeps both old and new background canvases present after
-  520 ms, guarding against the previous blink-like replacement.
+- Tapping another chat uses a short 240 ms crossfade.
+- Swiping a chat open blends its background over the previous one, driven
+  directly by drag progress and the remaining settle animation.
+- The blurred source uses clamped edge sampling so its edge does not produce
+  the darker rectangular strip visible in the supplied mid-swipe screenshot.
+- Release verification capture: `/tmp/trace-background-reveal-release.png`.
+- The interaction test compares two points in the same drag and confirms the
+  selected background's opacity grows with pointer progress before completing
+  during settle. The blend has no hard clipping boundary.
 
 - Source visual truth: the user's paper sketch and the previously verified
   narrow-layout implementation, supported by the structural Edge Rail

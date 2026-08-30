@@ -27,6 +27,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _desktopListCollapsed = false;
   bool _backgroundsPrecached = false;
   double _transitionTravel = 1;
+  int? _manualBackgroundFromIndex;
 
   @override
   void initState() {
@@ -92,9 +93,15 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         curve: Curves.easeOutCubic,
       ),
     ]);
-    if (open && mounted) {
-      setState(() => _conversations[_activeConversation].unreadCount = 0);
-    }
+    if (!mounted) return;
+    setState(() {
+      if (open) {
+        _conversations[_activeConversation].unreadCount = 0;
+      } else if (_manualBackgroundFromIndex case final previousIndex?) {
+        _activeConversation = previousIndex;
+      }
+      _manualBackgroundFromIndex = null;
+    });
   }
 
   void _selectConversation(int index) {
@@ -119,7 +126,12 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         _dragIsActive = false;
         return;
       }
-      setState(() => _activeConversation = index);
+      setState(() {
+        _manualBackgroundFromIndex = index == _activeConversation
+            ? null
+            : _activeConversation;
+        _activeConversation = index;
+      });
     }
     _dragIsActive = true;
   }
@@ -297,6 +309,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onSend: _sendMessage,
                         backgroundCanvasWidth: width,
                         backgroundPageLeft: conversationLeft,
+                        swipeBackgroundFrom: _manualBackgroundFromIndex == null
+                            ? null
+                            : _conversations[_manualBackgroundFromIndex!],
+                        swipeBackgroundProgress:
+                            _manualBackgroundFromIndex == null
+                            ? null
+                            : progress,
                       ),
                     ),
                     if (progress > 0 || _avatarPromotion.value > 0)
@@ -568,6 +587,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
     this.listVisible = true,
     required this.backgroundCanvasWidth,
     this.backgroundPageLeft,
+    this.swipeBackgroundFrom,
+    this.swipeBackgroundProgress,
   });
 
   final List<_Conversation> conversations;
@@ -580,6 +601,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final bool listVisible;
   final double backgroundCanvasWidth;
   final double? backgroundPageLeft;
+  final _Conversation? swipeBackgroundFrom;
+  final double? swipeBackgroundProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -594,6 +617,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
         listVisible: listVisible,
         backgroundCanvasWidth: backgroundCanvasWidth,
         backgroundPageLeft: backgroundPageLeft,
+        swipeBackgroundFrom: swipeBackgroundFrom,
+        swipeBackgroundProgress: swipeBackgroundProgress,
       ),
     );
   }
@@ -691,6 +716,8 @@ class _ConversationView extends StatelessWidget {
     required this.listVisible,
     required this.backgroundCanvasWidth,
     required this.backgroundPageLeft,
+    required this.swipeBackgroundFrom,
+    required this.swipeBackgroundProgress,
   });
 
   final _Conversation conversation;
@@ -702,6 +729,8 @@ class _ConversationView extends StatelessWidget {
   final bool listVisible;
   final double backgroundCanvasWidth;
   final double? backgroundPageLeft;
+  final _Conversation? swipeBackgroundFrom;
+  final double? swipeBackgroundProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -768,22 +797,31 @@ class _ConversationView extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 900),
-                  reverseDuration: const Duration(milliseconds: 900),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-                  transitionBuilder: (child, animation) =>
-                      FadeTransition(opacity: animation, child: child),
-                  child: _ConversationBackground(
-                    key: ValueKey(
-                      'conversation-background-transition-${conversation.id}',
-                    ),
+                if (swipeBackgroundFrom case final previousConversation?)
+                  _ManualBackgroundReveal(
+                    previousConversation: previousConversation,
                     conversation: conversation,
+                    progress: swipeBackgroundProgress ?? 0,
                     canvasWidth: backgroundCanvasWidth,
                     pageLeft: backgroundPageLeft,
+                  )
+                else
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 240),
+                    reverseDuration: const Duration(milliseconds: 240),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) =>
+                        FadeTransition(opacity: animation, child: child),
+                    child: _ConversationBackground(
+                      key: ValueKey(
+                        'conversation-background-transition-${conversation.id}',
+                      ),
+                      conversation: conversation,
+                      canvasWidth: backgroundCanvasWidth,
+                      pageLeft: backgroundPageLeft,
+                    ),
                   ),
-                ),
                 ListView.builder(
                   reverse: true,
                   padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
@@ -806,6 +844,45 @@ class _ConversationView extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ManualBackgroundReveal extends StatelessWidget {
+  const _ManualBackgroundReveal({
+    required this.previousConversation,
+    required this.conversation,
+    required this.progress,
+    required this.canvasWidth,
+    required this.pageLeft,
+  });
+
+  final _Conversation previousConversation;
+  final _Conversation conversation;
+  final double progress;
+  final double canvasWidth;
+  final double? pageLeft;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _ConversationBackground(
+          conversation: previousConversation,
+          canvasWidth: canvasWidth,
+          pageLeft: pageLeft,
+        ),
+        Opacity(
+          key: Key('manual-background-reveal-${conversation.id}'),
+          opacity: progress.clamp(0.0, 1.0),
+          child: _ConversationBackground(
+            conversation: conversation,
+            canvasWidth: canvasWidth,
+            pageLeft: pageLeft,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -867,6 +944,7 @@ class _ConversationBackground extends StatelessWidget {
                         imageFilter: ui.ImageFilter.blur(
                           sigmaX: 48,
                           sigmaY: 48,
+                          tileMode: ui.TileMode.clamp,
                         ),
                         child: Transform.scale(
                           scale: 1.42,
