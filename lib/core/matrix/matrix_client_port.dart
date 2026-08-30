@@ -101,6 +101,15 @@ abstract interface class MatrixTimelinePort {
 
   Future<void> requestKey(String eventId);
 
+  /// Downloads and decrypts media belonging to a timeline event.
+  ///
+  /// Image previews request a thumbnail when the event provides one and fall
+  /// back to the original attachment otherwise.
+  Future<MatrixAttachmentData> downloadAttachment(
+    String eventId, {
+    bool thumbnail = false,
+  });
+
   Future<void> redact(String eventId, {String? reason});
 
   Future<void> close();
@@ -160,6 +169,8 @@ enum MatrixConnectionPhase {
 enum MatrixRoomMembership { joined, invited, left }
 
 enum MatrixMessageDelivery { sending, sent, failed, synced }
+
+enum MatrixMessageKind { text, image, video, audio, file }
 
 enum MatrixVerificationPhase {
   requested,
@@ -244,6 +255,10 @@ final class MatrixMessage {
     required this.timestamp,
     required this.sentByMe,
     required this.delivery,
+    this.kind = MatrixMessageKind.text,
+    this.attachmentName,
+    this.attachmentMimeType,
+    this.attachmentSize,
     this.isSystem = false,
     this.isUndecryptable = false,
     this.canRequestKey = false,
@@ -256,9 +271,25 @@ final class MatrixMessage {
   final DateTime timestamp;
   final bool sentByMe;
   final MatrixMessageDelivery delivery;
+  final MatrixMessageKind kind;
+  final String? attachmentName;
+  final String? attachmentMimeType;
+  final int? attachmentSize;
   final bool isSystem;
   final bool isUndecryptable;
   final bool canRequestKey;
+}
+
+final class MatrixAttachmentData {
+  const MatrixAttachmentData({
+    required this.bytes,
+    required this.name,
+    required this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String name;
+  final String mimeType;
 }
 
 final class MatrixUser {

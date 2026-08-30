@@ -352,6 +352,17 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<MatrixAttachmentData> _loadAttachment(_ChatMessage message) {
+    final eventId = message.eventId;
+    if (eventId == null || _conversations.isEmpty) {
+      throw StateError('Attachment is not available.');
+    }
+    final roomId = _conversations[_activeConversation].id;
+    final timeline = _timelines[roomId];
+    if (timeline == null) throw StateError('Timeline is not loaded.');
+    return timeline.downloadAttachment(eventId, thumbnail: true);
+  }
+
   Future<String?> _askForEdit(String current) async {
     final controller = TextEditingController(text: current);
     final result = await showDialog<String>(
@@ -704,6 +715,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
               onRequestMessageKey: _requestMessageKey,
+              onLoadAttachment: _loadAttachment,
               onLeave: widget.client == null ? null : _leaveCurrentRoom,
               replyLabel: _replyToLabel,
               onCancelReply: () => setState(() {
@@ -803,6 +815,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
                         onRequestMessageKey: _requestMessageKey,
+                        onLoadAttachment: _loadAttachment,
                         onLeave: widget.client == null
                             ? null
                             : _leaveCurrentRoom,
@@ -1099,6 +1112,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onLoadOlder,
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
+    required this.onLoadAttachment,
     required this.onLeave,
     required this.replyLabel,
     required this.onCancelReply,
@@ -1122,6 +1136,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
   final ValueChanged<_ChatMessage> onRequestMessageKey;
+  final Future<MatrixAttachmentData> Function(_ChatMessage) onLoadAttachment;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final VoidCallback onCancelReply;
@@ -1147,6 +1162,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
         onRequestMessageKey: onRequestMessageKey,
+        onLoadAttachment: onLoadAttachment,
         onLeave: onLeave,
         replyLabel: replyLabel,
         onCancelReply: onCancelReply,
@@ -1256,6 +1272,7 @@ class _ConversationView extends StatelessWidget {
     required this.onLoadOlder,
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
+    required this.onLoadAttachment,
     required this.onLeave,
     required this.replyLabel,
     required this.onCancelReply,
@@ -1278,6 +1295,7 @@ class _ConversationView extends StatelessWidget {
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
   final ValueChanged<_ChatMessage> onRequestMessageKey;
+  final Future<MatrixAttachmentData> Function(_ChatMessage) onLoadAttachment;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final VoidCallback onCancelReply;
@@ -1431,6 +1449,8 @@ class _ConversationView extends StatelessWidget {
                             onMessageLongPress(conversation.messages[index]),
                         onRequestKey: () =>
                             onRequestMessageKey(conversation.messages[index]),
+                        onLoadAttachment: () =>
+                            onLoadAttachment(conversation.messages[index]),
                       );
                     },
                   ),
@@ -1626,36 +1646,63 @@ class _ConversationBackground extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     required this.message,
     required this.onLongPress,
     required this.onRequestKey,
+    required this.onLoadAttachment,
   });
 
   final _ChatMessage message;
   final VoidCallback onLongPress;
   final VoidCallback onRequestKey;
+  final Future<MatrixAttachmentData> Function() onLoadAttachment;
+
+  @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  Future<MatrixAttachmentData>? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.message.kind == MatrixMessageKind.image) {
+      _image = widget.onLoadAttachment();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.eventId != widget.message.eventId) {
+      _image = widget.message.kind == MatrixMessageKind.image
+          ? widget.onLoadAttachment()
+          : null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Align(
-      alignment: message.sentByMe
+      alignment: widget.message.sentByMe
           ? Alignment.centerRight
           : Alignment.centerLeft,
       child: GestureDetector(
-        onLongPress: onLongPress,
+        onLongPress: widget.onLongPress,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 300),
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: message.sentByMe
+            color: widget.message.sentByMe
                 ? Theme.of(context).colorScheme.onSurface
                 : Theme.of(context).colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: message.sentByMe
+              color: widget.message.sentByMe
                   ? Theme.of(
                       context,
                     ).colorScheme.surface.withValues(alpha: 0.32)
@@ -1676,26 +1723,47 @@ class _MessageBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                message.body,
-                style: TextStyle(
-                  height: 1.3,
-                  fontStyle: message.isSystem ? FontStyle.italic : null,
-                  color: message.sentByMe
+              if (widget.message.kind == MatrixMessageKind.image)
+                _ImageAttachment(
+                  data: _image!,
+                  name: widget.message.attachmentName ?? widget.message.body,
+                  foreground: widget.message.sentByMe
                       ? Theme.of(context).colorScheme.surface
                       : Theme.of(context).colorScheme.onSurface,
+                  onRetry: () => setState(() {
+                    _image = widget.onLoadAttachment();
+                  }),
+                )
+              else if (widget.message.kind != MatrixMessageKind.text)
+                _FileAttachment(
+                  message: widget.message,
+                  foreground: widget.message.sentByMe
+                      ? Theme.of(context).colorScheme.surface
+                      : Theme.of(context).colorScheme.onSurface,
+                )
+              else
+                Text(
+                  widget.message.body,
+                  style: TextStyle(
+                    height: 1.3,
+                    fontStyle: widget.message.isSystem
+                        ? FontStyle.italic
+                        : null,
+                    color: widget.message.sentByMe
+                        ? Theme.of(context).colorScheme.surface
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
-              ),
-              if (message.isUndecryptable) ...[
+              if (widget.message.isUndecryptable) ...[
                 const SizedBox(height: 6),
-                if (message.canRequestKey)
+                if (widget.message.canRequestKey)
                   TextButton.icon(
-                    key: Key('request-room-key-${message.eventId}'),
-                    onPressed: onRequestKey,
+                    key: Key('request-room-key-${widget.message.eventId}'),
+                    onPressed: widget.onRequestKey,
                     icon: const Icon(Icons.key_outlined, size: 16),
                     label: const Text('Request key'),
                     style: TextButton.styleFrom(
-                      foregroundColor: message.sentByMe
+                      foregroundColor: widget.message.sentByMe
                           ? Theme.of(context).colorScheme.surface
                           : Theme.of(context).colorScheme.onSurface,
                       visualDensity: VisualDensity.compact,
@@ -1707,7 +1775,7 @@ class _MessageBubble extends StatelessWidget {
                     'Restore encryption recovery to access its room key.',
                     style: TextStyle(
                       fontSize: 11,
-                      color: message.sentByMe
+                      color: widget.message.sentByMe
                           ? Theme.of(
                               context,
                             ).colorScheme.surface.withValues(alpha: 0.72)
@@ -1717,20 +1785,20 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
               ],
-              if (message.delivery != null) ...[
+              if (widget.message.delivery != null) ...[
                 const SizedBox(height: 3),
                 Text(
-                  switch (message.delivery!) {
+                  switch (widget.message.delivery!) {
                     MatrixMessageDelivery.sending => 'Sending…',
                     MatrixMessageDelivery.failed => 'Failed · tap to retry',
                     MatrixMessageDelivery.sent => 'Sent',
                     MatrixMessageDelivery.synced => _formatMessageTime(
-                      message.timestamp!,
+                      widget.message.timestamp!,
                     ),
                   },
                   style: TextStyle(
                     fontSize: 10,
-                    color: message.sentByMe
+                    color: widget.message.sentByMe
                         ? Theme.of(
                             context,
                           ).colorScheme.surface.withValues(alpha: 0.72)
@@ -1746,6 +1814,114 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ImageAttachment extends StatelessWidget {
+  const _ImageAttachment({
+    required this.data,
+    required this.name,
+    required this.foreground,
+    required this.onRetry,
+  });
+
+  final Future<MatrixAttachmentData> data;
+  final String name;
+  final Color foreground;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<MatrixAttachmentData>(
+      future: data,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.memory(
+                  snapshot.data!.bytes,
+                  key: Key('message-image-$name'),
+                  fit: BoxFit.cover,
+                  width: 272,
+                  errorBuilder: (_, _, _) => _AttachmentError(
+                    foreground: foreground,
+                    onRetry: onRetry,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ],
+          );
+        }
+        if (snapshot.hasError) {
+          return _AttachmentError(foreground: foreground, onRetry: onRetry);
+        }
+        return const SizedBox(
+          width: 272,
+          height: 160,
+          child: Center(child: CircularProgressIndicator()),
+        );
+      },
+    );
+  }
+}
+
+class _AttachmentError extends StatelessWidget {
+  const _AttachmentError({required this.foreground, required this.onRetry});
+
+  final Color foreground;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 272,
+    height: 96,
+    child: Center(
+      child: TextButton.icon(
+        onPressed: onRetry,
+        style: TextButton.styleFrom(foregroundColor: foreground),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Load image again'),
+      ),
+    ),
+  );
+}
+
+class _FileAttachment extends StatelessWidget {
+  const _FileAttachment({required this.message, required this.foreground});
+
+  final _ChatMessage message;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(switch (message.kind) {
+        MatrixMessageKind.video => Icons.videocam_outlined,
+        MatrixMessageKind.audio => Icons.audio_file_outlined,
+        _ => Icons.insert_drive_file_outlined,
+      }, color: foreground),
+      const SizedBox(width: 10),
+      Flexible(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.attachmentName ?? message.body,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (message.attachmentSize case final size?)
+              Text(_formatFileSize(size), style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 class _MessageComposer extends StatelessWidget {
@@ -2420,6 +2596,14 @@ String _formatMessageTime(DateTime timestamp) {
   return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
 }
 
+String _formatFileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kib = bytes / 1024;
+  if (kib < 1024) return '${kib.toStringAsFixed(kib < 10 ? 1 : 0)} KB';
+  final mib = kib / 1024;
+  return '${mib.toStringAsFixed(mib < 10 ? 1 : 0)} MB';
+}
+
 String _mimeTypeFor(String? extension) => switch (extension?.toLowerCase()) {
   'jpg' || 'jpeg' => 'image/jpeg',
   'png' => 'image/png',
@@ -2477,6 +2661,10 @@ final class _ChatMessage {
     this.isSystem = false,
     this.isUndecryptable = false,
     this.canRequestKey = false,
+    this.kind = MatrixMessageKind.text,
+    this.attachmentName,
+    this.attachmentMimeType,
+    this.attachmentSize,
   });
 
   factory _ChatMessage.fromMatrix(MatrixMessage message) => _ChatMessage(
@@ -2489,6 +2677,10 @@ final class _ChatMessage {
     isSystem: message.isSystem || message.isUndecryptable,
     isUndecryptable: message.isUndecryptable,
     canRequestKey: message.canRequestKey,
+    kind: message.kind,
+    attachmentName: message.attachmentName,
+    attachmentMimeType: message.attachmentMimeType,
+    attachmentSize: message.attachmentSize,
   );
 
   final String body;
@@ -2500,6 +2692,10 @@ final class _ChatMessage {
   final bool isSystem;
   final bool isUndecryptable;
   final bool canRequestKey;
+  final MatrixMessageKind kind;
+  final String? attachmentName;
+  final String? attachmentMimeType;
+  final int? attachmentSize;
 }
 
 List<_Conversation> _mockConversations() => [

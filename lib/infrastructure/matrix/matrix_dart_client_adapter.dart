@@ -494,7 +494,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
           return MatrixRoom(
             id: room.id,
             name: room.getLocalizedDisplayname(),
-            preview: lastEvent == null ? '' : lastEvent.plaintextBody,
+            preview: lastEvent == null ? '' : _eventPreview(lastEvent),
             timestamp: room.latestEventReceivedTime,
             membership: switch (room.membership) {
               matrix.Membership.invite => MatrixRoomMembership.invited,
@@ -515,6 +515,17 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
         .toList(growable: false);
     rooms.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return rooms;
+  }
+
+  String _eventPreview(matrix.Event event) {
+    final body = event.plaintextBody;
+    return switch (event.messageType) {
+      matrix.MessageTypes.Image => 'Photo · $body',
+      matrix.MessageTypes.Video => 'Video · $body',
+      matrix.MessageTypes.Audio => 'Audio · $body',
+      matrix.MessageTypes.File => 'File · $body',
+      _ => body,
+    };
   }
 
   Uri? _mediaUrl(Uri? mxc, {required int width, required int height}) {
@@ -730,10 +741,40 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
         matrix.EventStatus.error => MatrixMessageDelivery.failed,
         matrix.EventStatus.synced => MatrixMessageDelivery.synced,
       },
+      kind: switch (event.messageType) {
+        matrix.MessageTypes.Image => MatrixMessageKind.image,
+        matrix.MessageTypes.Video => MatrixMessageKind.video,
+        matrix.MessageTypes.Audio => MatrixMessageKind.audio,
+        matrix.MessageTypes.File => MatrixMessageKind.file,
+        _ => MatrixMessageKind.text,
+      },
+      attachmentName: event.hasAttachment ? event.plaintextBody : null,
+      attachmentMimeType: event.hasAttachment ? event.attachmentMimetype : null,
+      attachmentSize: event.hasAttachment
+          ? event.infoMap['size'] as int?
+          : null,
       isSystem: system,
       isUndecryptable: undecryptable,
       canRequestKey:
           undecryptable && event.content['can_request_session'] == true,
+    );
+  }
+
+  @override
+  Future<MatrixAttachmentData> downloadAttachment(
+    String eventId, {
+    bool thumbnail = false,
+  }) async {
+    final event = _timeline.events.firstWhere(
+      (event) => event.eventId == eventId,
+    );
+    final file = await event.downloadAndDecryptAttachment(
+      getThumbnail: thumbnail,
+    );
+    return MatrixAttachmentData(
+      bytes: file.bytes,
+      name: file.name,
+      mimeType: file.mimeType,
     );
   }
 
