@@ -155,6 +155,21 @@ void main() {
     );
   });
 
+  testWidgets('People shows only direct chats and can return to All', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    await tester.tap(find.byKey(const Key('people-chats-context')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('profile-avatar-maya')), findsOneWidget);
+    expect(find.byKey(const Key('profile-avatar-family')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('all-chats-context')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('profile-avatar-family')), findsOneWidget);
+  });
+
   testWidgets('profile pictures open in a downloadable full-size viewer', (
     tester,
   ) async {

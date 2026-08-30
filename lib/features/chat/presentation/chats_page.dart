@@ -641,6 +641,19 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void _selectContext(String? contextId) {
     if (_selectedContextId == contextId) return;
     _selectedContextId = contextId;
+    if (widget.client == null) {
+      final conversations = _conversationCache.values.toList(growable: true);
+      setState(() {
+        _conversations = contextId == _peopleContextId
+            ? conversations
+                  .where((conversation) => conversation.isDirect)
+                  .toList(growable: true)
+            : conversations;
+        _activeConversation = 0;
+        _manualBackgroundFromIndex = null;
+      });
+      return;
+    }
     _applyRooms(_allRooms);
   }
 
@@ -953,6 +966,24 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     if (_conversations.isEmpty) {
+      if (_selectedContextId != null) {
+        return _ChatOverview(
+          conversations: const [],
+          spaces: _availableSpaces,
+          selectedContextId: _selectedContextId,
+          onContextChanged: _selectContext,
+          onReorderSpaces: _showSpaceOrder,
+          onTogglePinned: _togglePinned,
+          activeIndex: 0,
+          transitionProgress: 0,
+          avatarPromotion: 0,
+          transitionTravel: 1,
+          scrollController: _overviewScrollController,
+          onOpen: (_) {},
+          onSearch: _showSearch,
+          onNewChat: _showNewChat,
+        );
+      }
       return _EmptyRoomsView(
         snapshot: widget.client?.current,
         onSearch: _showSearch,
@@ -1239,37 +1270,53 @@ class _ChatOverview extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              controller: scrollController,
-              padding: const EdgeInsets.only(bottom: 24),
-              itemExtent: _conversationRowHeight,
-              itemCount: conversations.length,
-              itemBuilder: (context, index) {
-                final conversation = conversations[index];
-                final delayedProgress = _delayedSelectedProgress(
-                  transitionProgress,
-                );
-                final selectedLag =
-                    transitionTravel * (transitionProgress - delayedProgress);
-                return Transform.translate(
-                  offset: index == activeIndex
-                      ? Offset(selectedLag, 0)
-                      : Offset.zero,
-                  child: _ConversationRow(
-                    key: Key('conversation-row-$index'),
-                    conversation: conversation,
-                    selected:
-                        index == activeIndex &&
-                        (highlightActive || transitionProgress > 0.02),
-                    avatarVisible:
-                        index != activeIndex ||
-                        (transitionProgress == 0 && avatarPromotion == 0),
-                    onTap: () => onOpen(index),
-                    onLongPress: () => onTogglePinned(conversation),
+            child: conversations.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text(
+                        selectedContextId == _peopleContextId
+                            ? 'No direct chats with people yet.'
+                            : 'No chats in this space yet.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: scrollController,
+                    padding: const EdgeInsets.only(bottom: 24),
+                    itemExtent: _conversationRowHeight,
+                    itemCount: conversations.length,
+                    itemBuilder: (context, index) {
+                      final conversation = conversations[index];
+                      final delayedProgress = _delayedSelectedProgress(
+                        transitionProgress,
+                      );
+                      final selectedLag =
+                          transitionTravel *
+                          (transitionProgress - delayedProgress);
+                      return Transform.translate(
+                        offset: index == activeIndex
+                            ? Offset(selectedLag, 0)
+                            : Offset.zero,
+                        child: _ConversationRow(
+                          key: Key('conversation-row-$index'),
+                          conversation: conversation,
+                          selected:
+                              index == activeIndex &&
+                              (highlightActive || transitionProgress > 0.02),
+                          avatarVisible:
+                              index != activeIndex ||
+                              (transitionProgress == 0 && avatarPromotion == 0),
+                          onTap: () => onOpen(index),
+                          onLongPress: () => onTogglePinned(conversation),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
