@@ -222,7 +222,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     required Uint8List bytes,
     required String mimeType,
   }) async {
-    final file = matrix.MatrixFile(
+    final file = matrix.MatrixFile.fromMimeType(
       bytes: bytes,
       name: name,
       mimeType: mimeType,

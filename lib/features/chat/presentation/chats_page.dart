@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -42,6 +41,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _dragIsActive = false;
   bool _desktopListCollapsed = false;
   bool _backgroundsPrecached = false;
+  bool _attachmentBusy = false;
   double _transitionTravel = 1;
   int? _manualBackgroundFromIndex;
 
@@ -352,7 +352,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<MatrixAttachmentData> _loadAttachment(_ChatMessage message) {
+  Future<MatrixAttachmentData> _loadAttachment(
+    _ChatMessage message, {
+    bool thumbnail = false,
+  }) {
     final eventId = message.eventId;
     if (eventId == null || _conversations.isEmpty) {
       throw StateError('Attachment is not available.');
@@ -360,7 +363,30 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final roomId = _conversations[_activeConversation].id;
     final timeline = _timelines[roomId];
     if (timeline == null) throw StateError('Timeline is not loaded.');
-    return timeline.downloadAttachment(eventId, thumbnail: true);
+    return timeline.downloadAttachment(eventId, thumbnail: thumbnail);
+  }
+
+  Future<void> _saveAttachment(_ChatMessage message) async {
+    try {
+      final attachment = await _loadAttachment(message);
+      final saved = await FilePicker.saveFile(
+        dialogTitle: 'Save ${attachment.name}',
+        fileName: attachment.name,
+        bytes: attachment.bytes,
+        mimeType: attachment.mimeType,
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('${attachment.name} saved.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save attachment: ${_errorText(error)}'),
+        ),
+      );
+    }
   }
 
   Future<String?> _askForEdit(String current) async {
@@ -424,33 +450,33 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   Future<void> _sendAttachment() async {
     final client = widget.client;
-    if (client == null) return;
-    final file = await FilePicker.pickFile();
+    if (client == null || _attachmentBusy || _conversations.isEmpty) return;
+    final file = await FilePicker.pickFile(dialogTitle: 'Add an attachment');
     if (file == null || !mounted) return;
-    late final Uint8List bytes;
-    try {
-      bytes = await file.readAsBytes();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Trace could not read that file.')),
-      );
-      return;
-    }
     final roomId = _conversations[_activeConversation].id;
+    final fileName = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
+    setState(() => _attachmentBusy = true);
     try {
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) throw Exception('The selected file is empty.');
       await client.sendFile(
         roomId: roomId,
-        name: file.name,
+        name: fileName,
         bytes: bytes,
         mimeType: _mimeTypeFor(file.extension),
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$fileName sent.')));
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('File was not sent: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File was not sent: ${_errorText(error)}')),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
     }
   }
 
@@ -716,8 +742,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onMessageLongPress: _showMessageActions,
               onRequestMessageKey: _requestMessageKey,
               onLoadAttachment: _loadAttachment,
+              onSaveAttachment: _saveAttachment,
               onLeave: widget.client == null ? null : _leaveCurrentRoom,
               replyLabel: _replyToLabel,
+              attachmentBusy: _attachmentBusy,
               onCancelReply: () => setState(() {
                 _replyToEventId = null;
                 _replyToLabel = null;
@@ -816,10 +844,12 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onMessageLongPress: _showMessageActions,
                         onRequestMessageKey: _requestMessageKey,
                         onLoadAttachment: _loadAttachment,
+                        onSaveAttachment: _saveAttachment,
                         onLeave: widget.client == null
                             ? null
                             : _leaveCurrentRoom,
                         replyLabel: _replyToLabel,
+                        attachmentBusy: _attachmentBusy,
                         onCancelReply: () => setState(() {
                           _replyToEventId = null;
                           _replyToLabel = null;
@@ -1113,8 +1143,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
+    required this.onSaveAttachment,
     required this.onLeave,
     required this.replyLabel,
+    required this.attachmentBusy,
     required this.onCancelReply,
     this.showMobileRailToggle = true,
     this.onToggleMobileRail,
@@ -1136,9 +1168,12 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
   final ValueChanged<_ChatMessage> onRequestMessageKey;
-  final Future<MatrixAttachmentData> Function(_ChatMessage) onLoadAttachment;
+  final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
+  onLoadAttachment;
+  final ValueChanged<_ChatMessage> onSaveAttachment;
   final VoidCallback? onLeave;
   final String? replyLabel;
+  final bool attachmentBusy;
   final VoidCallback onCancelReply;
   final bool showMobileRailToggle;
   final VoidCallback? onToggleMobileRail;
@@ -1163,8 +1198,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onMessageLongPress: onMessageLongPress,
         onRequestMessageKey: onRequestMessageKey,
         onLoadAttachment: onLoadAttachment,
+        onSaveAttachment: onSaveAttachment,
         onLeave: onLeave,
         replyLabel: replyLabel,
+        attachmentBusy: attachmentBusy,
         onCancelReply: onCancelReply,
         showMobileRailToggle: showMobileRailToggle,
         onToggleMobileRail: onToggleMobileRail,
@@ -1273,8 +1310,10 @@ class _ConversationView extends StatelessWidget {
     required this.onMessageLongPress,
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
+    required this.onSaveAttachment,
     required this.onLeave,
     required this.replyLabel,
+    required this.attachmentBusy,
     required this.onCancelReply,
     required this.showMobileRailToggle,
     required this.onToggleMobileRail,
@@ -1295,9 +1334,12 @@ class _ConversationView extends StatelessWidget {
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
   final ValueChanged<_ChatMessage> onRequestMessageKey;
-  final Future<MatrixAttachmentData> Function(_ChatMessage) onLoadAttachment;
+  final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
+  onLoadAttachment;
+  final ValueChanged<_ChatMessage> onSaveAttachment;
   final VoidCallback? onLeave;
   final String? replyLabel;
+  final bool attachmentBusy;
   final VoidCallback onCancelReply;
   final bool showMobileRailToggle;
   final VoidCallback? onToggleMobileRail;
@@ -1449,8 +1491,12 @@ class _ConversationView extends StatelessWidget {
                             onMessageLongPress(conversation.messages[index]),
                         onRequestKey: () =>
                             onRequestMessageKey(conversation.messages[index]),
-                        onLoadAttachment: () =>
-                            onLoadAttachment(conversation.messages[index]),
+                        onLoadAttachment: () => onLoadAttachment(
+                          conversation.messages[index],
+                          thumbnail: true,
+                        ),
+                        onSaveAttachment: () =>
+                            onSaveAttachment(conversation.messages[index]),
                       );
                     },
                   ),
@@ -1465,6 +1511,7 @@ class _ConversationView extends StatelessWidget {
             onAttachment: onAttachment,
             onChanged: onComposerChanged,
             replyLabel: replyLabel,
+            attachmentBusy: attachmentBusy,
             onCancelReply: onCancelReply,
           ),
         ],
@@ -1652,12 +1699,14 @@ class _MessageBubble extends StatefulWidget {
     required this.onLongPress,
     required this.onRequestKey,
     required this.onLoadAttachment,
+    required this.onSaveAttachment,
   });
 
   final _ChatMessage message;
   final VoidCallback onLongPress;
   final VoidCallback onRequestKey;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
+  final VoidCallback onSaveAttachment;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -1691,6 +1740,11 @@ class _MessageBubbleState extends State<_MessageBubble> {
           ? Alignment.centerRight
           : Alignment.centerLeft,
       child: GestureDetector(
+        onTap:
+            widget.message.kind == MatrixMessageKind.text ||
+                widget.message.kind == MatrixMessageKind.image
+            ? null
+            : widget.onSaveAttachment,
         onLongPress: widget.onLongPress,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 300),
@@ -1915,8 +1969,14 @@ class _FileAttachment extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            if (message.attachmentSize case final size?)
-              Text(_formatFileSize(size), style: const TextStyle(fontSize: 11)),
+            Text(
+              [
+                if (message.attachmentSize case final size?)
+                  _formatFileSize(size),
+                'Tap to save',
+              ].join(' · '),
+              style: const TextStyle(fontSize: 11),
+            ),
           ],
         ),
       ),
@@ -1932,6 +1992,7 @@ class _MessageComposer extends StatelessWidget {
     required this.onAttachment,
     required this.onChanged,
     required this.replyLabel,
+    required this.attachmentBusy,
     required this.onCancelReply,
   });
 
@@ -1941,6 +2002,7 @@ class _MessageComposer extends StatelessWidget {
   final VoidCallback onAttachment;
   final ValueChanged<String> onChanged;
   final String? replyLabel;
+  final bool attachmentBusy;
   final VoidCallback onCancelReply;
 
   @override
@@ -1969,8 +2031,13 @@ class _MessageComposer extends StatelessWidget {
               children: [
                 IconButton(
                   tooltip: 'Add attachment',
-                  onPressed: onAttachment,
-                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: attachmentBusy ? null : onAttachment,
+                  icon: attachmentBusy
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add_circle_outline),
                 ),
                 Expanded(
                   child: TextField(
@@ -2603,6 +2670,9 @@ String _formatFileSize(int bytes) {
   final mib = kib / 1024;
   return '${mib.toStringAsFixed(mib < 10 ? 1 : 0)} MB';
 }
+
+String _errorText(Object error) =>
+    error.toString().replaceFirst('Exception: ', '');
 
 String _mimeTypeFor(String? extension) => switch (extension?.toLowerCase()) {
   'jpg' || 'jpeg' => 'image/jpeg',
