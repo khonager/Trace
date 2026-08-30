@@ -17,6 +17,9 @@ as the dependency-free widget-test fixture. See
 scope and [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
 for the dependency rules. Remaining alpha work and platform limitations are
 tracked in [`docs/product/ALPHA_CHECKLIST.md`](docs/product/ALPHA_CHECKLIST.md).
+Longer-term messaging, media, calling, accessibility, moderation, and platform
+ideas are collected in the
+[`future feature catalog`](docs/product/FUTURE_FEATURE_CATALOG.md).
 
 ## Development
 
