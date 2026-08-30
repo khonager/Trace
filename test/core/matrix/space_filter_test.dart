@@ -8,17 +8,23 @@ void main() {
       String id, {
       bool space = false,
       List<String> children = const [],
+      bool direct = false,
+      bool pinned = false,
+      double? pinOrder,
+      int minute = 0,
     }) => MatrixRoom(
       id: id,
       name: id,
       preview: '',
-      timestamp: now,
+      timestamp: now.add(Duration(minutes: minute)),
       membership: MatrixRoomMembership.joined,
       unreadCount: 0,
       encrypted: true,
-      isDirect: false,
+      isDirect: direct,
       isSpace: space,
       childRoomIds: children,
+      isPinned: pinned,
+      pinOrder: pinOrder,
     );
 
     final rooms = [
@@ -36,7 +42,43 @@ void main() {
     ]);
     expect(
       matrixChatRoomsForSpace(rooms, spaceId: 'root').map((room) => room.id),
-      ['alpha', 'beta'],
+      ['beta', 'alpha'],
     );
+  });
+
+  test('all chats put ordered pinned DMs before recent rooms', () {
+    final now = DateTime(2026);
+    MatrixRoom room(
+      String id, {
+      required DateTime timestamp,
+      bool direct = false,
+      bool pinned = false,
+      double? pinOrder,
+    }) => MatrixRoom(
+      id: id,
+      name: id,
+      preview: '',
+      timestamp: timestamp,
+      membership: MatrixRoomMembership.joined,
+      unreadCount: 0,
+      encrypted: true,
+      isDirect: direct,
+      isPinned: pinned,
+      pinOrder: pinOrder,
+    );
+
+    final rooms = [
+      room('recent', timestamp: now.add(const Duration(hours: 3))),
+      room('pin-2', timestamp: now, direct: true, pinned: true, pinOrder: .8),
+      room('pin-1', timestamp: now, direct: true, pinned: true, pinOrder: .2),
+      room('older', timestamp: now),
+    ];
+
+    expect(matrixChatRoomsForSpace(rooms).map((room) => room.id), [
+      'pin-1',
+      'pin-2',
+      'recent',
+      'older',
+    ]);
   });
 }

@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart' show AsyncCallback;
 import 'package:flutter/material.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 
-const double _overviewHeaderHeight = 88;
+const double _overviewHeaderHeight = 132;
 const double _conversationRowHeight = 92;
 const double _chatRailWidth = 64;
 const double _chatPeekWidth = 28;
@@ -29,6 +29,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   List<MatrixRoom> _allRooms = const [];
   final Map<String, _Conversation> _conversationCache = {};
   String? _selectedSpaceId;
+  List<String> _spaceOrder = const [];
   StreamSubscription<MatrixClientSnapshot>? _clientSubscription;
   final Map<String, MatrixTimelinePort> _timelines = {};
   final Map<String, StreamSubscription<List<MatrixMessage>>>
@@ -52,6 +53,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _allRooms = widget.client?.current.rooms ?? const [];
+    _spaceOrder = widget.client?.current.spaceOrder ?? const [];
     _conversations = widget.client == null
         ? _mockConversations()
         : _mapRooms(matrixChatRoomsForSpace(_allRooms));
@@ -60,6 +62,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
     _clientSubscription = widget.client?.snapshots.listen((snapshot) {
       if (!mounted) return;
+      _spaceOrder = snapshot.spaceOrder;
       _applyRooms(snapshot.rooms);
     });
     _workspaceTransition = AnimationController(
@@ -518,6 +521,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           ..profileUrl = room.avatarUrl
           ..encrypted = room.encrypted
           ..membership = room.membership;
+        existing
+          ..isDirect = room.isDirect
+          ..isPinned = room.isPinned
+          ..pinOrder = room.pinOrder;
         existing.typingLabel = room.typingUsers.isEmpty
             ? null
             : '${room.typingUsers.join(', ')} ${room.typingUsers.length == 1 ? 'is' : 'are'} typing…';
@@ -537,18 +544,85 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
   }
 
-  List<MatrixRoom> get _availableSpaces => _allRooms
-      .where(
-        (room) =>
-            room.isSpace &&
-            matrixChatRoomsForSpace(_allRooms, spaceId: room.id).isNotEmpty,
-      )
-      .toList(growable: false);
+  List<MatrixRoom> get _availableSpaces {
+    final spaces = _allRooms
+        .where(
+          (room) =>
+              room.isSpace &&
+              matrixChatRoomsForSpace(_allRooms, spaceId: room.id).isNotEmpty,
+        )
+        .toList(growable: true);
+    final positions = {
+      for (var index = 0; index < _spaceOrder.length; index++)
+        _spaceOrder[index]: index,
+    };
+    spaces.sort((a, b) {
+      final aPosition = positions[a.id];
+      final bPosition = positions[b.id];
+      if (aPosition != null && bPosition != null) {
+        return aPosition.compareTo(bPosition);
+      }
+      if (aPosition != null) return -1;
+      if (bPosition != null) return 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return spaces;
+  }
 
   void _selectSpace(String? spaceId) {
     if (_selectedSpaceId == spaceId) return;
     _selectedSpaceId = spaceId;
     _applyRooms(_allRooms);
+  }
+
+  Future<void> _togglePinned(_Conversation conversation) async {
+    final client = widget.client;
+    if (client == null || !conversation.isDirect) return;
+    final pinned = !conversation.isPinned;
+    final pinnedRooms = _conversations
+        .where((room) => room.isDirect && room.isPinned)
+        .toList(growable: false);
+    final order = pinned
+        ? ((pinnedRooms
+                      .map((room) => room.pinOrder ?? 0)
+                      .fold<double>(
+                        0,
+                        (largest, value) => value > largest ? value : largest,
+                      ) +
+                  .1)
+              .clamp(0.0, 1.0))
+        : null;
+    try {
+      await client.setRoomPinned(conversation.id, pinned: pinned, order: order);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update pin: ${_errorText(error)}')),
+      );
+    }
+  }
+
+  Future<void> _showSpaceOrder() async {
+    final client = widget.client;
+    if (client == null) return;
+    final ordered = _availableSpaces.toList(growable: true);
+    final result = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _SpaceOrderSheet(spaces: ordered),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _spaceOrder = result);
+    try {
+      await client.setSpaceOrder(result);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save space order: ${_errorText(error)}'),
+        ),
+      );
+    }
   }
 
   Future<void> _loadTimeline(int index) async {
@@ -611,6 +685,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     typingLabel: room.typingUsers.isEmpty
         ? null
         : '${room.typingUsers.join(', ')} ${room.typingUsers.length == 1 ? 'is' : 'are'} typing…',
+    isDirect: room.isDirect,
+    isPinned: room.isPinned,
+    pinOrder: room.pinOrder,
   );
 
   void _toggleDesktopList() {
@@ -743,6 +820,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                 spaces: _availableSpaces,
                 selectedSpaceId: _selectedSpaceId,
                 onSpaceChanged: _selectSpace,
+                onReorderSpaces: _showSpaceOrder,
+                onTogglePinned: _togglePinned,
                 activeIndex: _activeConversation,
                 transitionProgress: 0,
                 avatarPromotion: 0,
@@ -855,6 +934,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         spaces: _availableSpaces,
                         selectedSpaceId: _selectedSpaceId,
                         onSpaceChanged: _selectSpace,
+                        onReorderSpaces: _showSpaceOrder,
+                        onTogglePinned: _togglePinned,
                         activeIndex: _activeConversation,
                         transitionProgress: progress,
                         avatarPromotion: _avatarPromotion.value,
@@ -949,6 +1030,8 @@ class _ChatOverview extends StatelessWidget {
     required this.spaces,
     required this.selectedSpaceId,
     required this.onSpaceChanged,
+    required this.onReorderSpaces,
+    required this.onTogglePinned,
     required this.activeIndex,
     required this.transitionProgress,
     required this.avatarPromotion,
@@ -964,6 +1047,8 @@ class _ChatOverview extends StatelessWidget {
   final List<MatrixRoom> spaces;
   final String? selectedSpaceId;
   final ValueChanged<String?> onSpaceChanged;
+  final VoidCallback onReorderSpaces;
+  final ValueChanged<_Conversation> onTogglePinned;
   final int activeIndex;
   final double transitionProgress;
   final double avatarPromotion;
@@ -985,79 +1070,79 @@ class _ChatOverview extends StatelessWidget {
           SizedBox(
             height: _overviewHeaderHeight,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
-              child: Row(
+              padding: const EdgeInsets.fromLTRB(18, 8, 10, 6),
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            selectedSpaceId == null
-                                ? 'Chats'
-                                : spaces
-                                      .firstWhere(
-                                        (space) => space.id == selectedSpaceId,
-                                      )
-                                      .name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Chats',
+                          style: Theme.of(context).textTheme.headlineMedium,
                         ),
-                        if (spaces.isNotEmpty)
-                          PopupMenuButton<String?>(
-                            key: const Key('space-filter'),
-                            tooltip: 'Choose a space',
-                            initialValue: selectedSpaceId,
-                            onSelected: onSpaceChanged,
-                            icon: const Icon(Icons.expand_more),
-                            itemBuilder: (context) => [
-                              const PopupMenuItem<String?>(
-                                value: null,
-                                child: ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.forum_outlined),
-                                  title: Text('All chats'),
-                                ),
-                              ),
-                              for (final space in spaces)
-                                PopupMenuItem<String?>(
-                                  value: space.id,
-                                  child: ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    leading: const Icon(
-                                      Icons.workspaces_outline,
-                                    ),
-                                    title: Text(space.name),
-                                  ),
-                                ),
-                            ],
+                      ),
+                      IconButton(
+                        key: const Key('search-chats'),
+                        tooltip: 'Search',
+                        onPressed: onSearch,
+                        icon: const Icon(Icons.search),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainer,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        key: const Key('new-chat'),
+                        tooltip: 'New chat',
+                        onPressed: onNewChat,
+                        icon: const Icon(Icons.edit_square),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 40,
+                    child: ListView(
+                      key: const Key('space-context-dock'),
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        ChoiceChip(
+                          key: const Key('all-chats-context'),
+                          selected: selectedSpaceId == null,
+                          onSelected: (_) => onSpaceChanged(null),
+                          avatar: const Icon(Icons.forum_outlined, size: 18),
+                          label: const Text('All'),
+                        ),
+                        for (final space in spaces) ...[
+                          const SizedBox(width: 6),
+                          ChoiceChip(
+                            key: Key('space-context-${space.id}'),
+                            selected: selectedSpaceId == space.id,
+                            onSelected: (_) => onSpaceChanged(space.id),
+                            avatar: const Icon(
+                              Icons.workspaces_outline,
+                              size: 18,
+                            ),
+                            label: Text(space.name),
                           ),
+                        ],
+                        if (spaces.length > 1) ...[
+                          const SizedBox(width: 2),
+                          IconButton(
+                            key: const Key('reorder-spaces'),
+                            tooltip: 'Reorder spaces',
+                            onPressed: onReorderSpaces,
+                            icon: const Icon(Icons.swap_horiz),
+                          ),
+                        ],
                       ],
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('search-chats'),
-                    tooltip: 'Search',
-                    onPressed: onSearch,
-                    icon: const Icon(Icons.search),
-                    style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainer,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton(
-                    key: const Key('new-chat'),
-                    tooltip: 'New chat',
-                    onPressed: onNewChat,
-                    icon: const Icon(Icons.edit_square),
-                    style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainer,
                     ),
                   ),
                 ],
@@ -1091,6 +1176,9 @@ class _ChatOverview extends StatelessWidget {
                         index != activeIndex ||
                         (transitionProgress == 0 && avatarPromotion == 0),
                     onTap: () => onOpen(index),
+                    onLongPress: conversation.isDirect
+                        ? () => onTogglePinned(conversation)
+                        : null,
                   ),
                 );
               },
@@ -1109,12 +1197,14 @@ class _ConversationRow extends StatelessWidget {
     required this.selected,
     required this.avatarVisible,
     required this.onTap,
+    this.onLongPress,
   });
 
   final _Conversation conversation;
   final bool selected;
   final bool avatarVisible;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1141,6 +1231,7 @@ class _ConversationRow extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: onTap,
+                onLongPress: onLongPress,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(14, 12, 0, 12),
                   child: Row(
@@ -1164,16 +1255,29 @@ class _ConversationRow extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(
-                              conversation.name,
-                              key: Key('conversation-name-${conversation.id}'),
-                              maxLines: 1,
-                              textAlign: TextAlign.end,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (conversation.isPinned) ...[
+                                  const Icon(Icons.push_pin, size: 14),
+                                  const SizedBox(width: 4),
+                                ],
+                                Flexible(
+                                  child: Text(
+                                    conversation.name,
+                                    key: Key(
+                                      'conversation-name-${conversation.id}',
+                                    ),
+                                    maxLines: 1,
+                                    textAlign: TextAlign.end,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -2161,6 +2265,76 @@ class _MessageComposer extends StatelessWidget {
   }
 }
 
+class _SpaceOrderSheet extends StatefulWidget {
+  const _SpaceOrderSheet({required this.spaces});
+
+  final List<MatrixRoom> spaces;
+
+  @override
+  State<_SpaceOrderSheet> createState() => _SpaceOrderSheetState();
+}
+
+class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
+  late final List<MatrixRoom> _spaces = widget.spaces.toList(growable: true);
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .62,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Order spaces',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    _spaces.map((space) => space.id).toList(growable: false),
+                  ),
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'This personal order follows your Matrix account across Trace devices.',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ReorderableListView.builder(
+              itemCount: _spaces.length,
+              onReorderItem: (oldIndex, newIndex) {
+                setState(() {
+                  _spaces.insert(newIndex, _spaces.removeAt(oldIndex));
+                });
+              },
+              itemBuilder: (context, index) {
+                final space = _spaces[index];
+                return ListTile(
+                  key: ValueKey(space.id),
+                  leading: const Icon(Icons.workspaces_outline),
+                  title: Text(space.name),
+                  trailing: const Icon(Icons.drag_handle),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _InitialsAvatar extends StatelessWidget {
   const _InitialsAvatar({
     super.key,
@@ -2791,6 +2965,9 @@ final class _Conversation {
     this.encrypted = true,
     this.membership = MatrixRoomMembership.joined,
     this.typingLabel,
+    this.isDirect = false,
+    this.isPinned = false,
+    this.pinOrder,
   });
 
   final String id;
@@ -2805,6 +2982,9 @@ final class _Conversation {
   bool encrypted;
   MatrixRoomMembership membership;
   String? typingLabel;
+  bool isDirect;
+  bool isPinned;
+  double? pinOrder;
 }
 
 final class _ChatMessage {

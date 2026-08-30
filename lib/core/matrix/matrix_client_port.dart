@@ -75,6 +75,14 @@ abstract interface class MatrixClientPort {
 
   Future<void> leaveRoom(String roomId);
 
+  Future<void> setRoomPinned(
+    String roomId, {
+    required bool pinned,
+    double? order,
+  });
+
+  Future<void> setSpaceOrder(List<String> spaceIds);
+
   Future<String> initializeRecovery(String passphrase);
 
   Future<void> restoreRecovery(String passphraseOrRecoveryKey);
@@ -189,6 +197,7 @@ final class MatrixClientSnapshot {
     this.account,
     this.rooms = const [],
     this.error,
+    this.spaceOrder = const [],
   });
 
   const MatrixClientSnapshot.starting()
@@ -198,6 +207,7 @@ final class MatrixClientSnapshot {
   final MatrixAccount? account;
   final List<MatrixRoom> rooms;
   final String? error;
+  final List<String> spaceOrder;
 
   bool get isLoggedIn => account != null;
 }
@@ -233,6 +243,8 @@ final class MatrixRoom {
     this.typingUsers = const [],
     this.isSpace = false,
     this.childRoomIds = const [],
+    this.isPinned = false,
+    this.pinOrder,
   });
 
   final String id;
@@ -248,6 +260,8 @@ final class MatrixRoom {
   final List<String> typingUsers;
   final bool isSpace;
   final List<String> childRoomIds;
+  final bool isPinned;
+  final double? pinOrder;
 }
 
 /// Returns chat rooms in a selected Matrix space, including nested spaces.
@@ -257,9 +271,21 @@ List<MatrixRoom> matrixChatRoomsForSpace(
   String? spaceId,
 }) {
   if (spaceId == null) {
-    return rooms.where((room) => !room.isSpace).toList(growable: false);
+    final chats = rooms.where((room) => !room.isSpace).toList(growable: false);
+    chats.sort((a, b) {
+      final aPinned = a.isDirect && a.isPinned;
+      final bPinned = b.isDirect && b.isPinned;
+      if (aPinned != bPinned) return aPinned ? -1 : 1;
+      if (aPinned) {
+        final order = (a.pinOrder ?? 1).compareTo(b.pinOrder ?? 1);
+        if (order != 0) return order;
+      }
+      return b.timestamp.compareTo(a.timestamp);
+    });
+    return chats;
   }
   final byId = {for (final room in rooms) room.id: room};
+  final visibleRooms = <MatrixRoom>[];
   final visibleIds = <String>{};
   final visitedSpaces = <String>{};
 
@@ -267,7 +293,7 @@ List<MatrixRoom> matrixChatRoomsForSpace(
     final room = byId[id];
     if (room == null) return;
     if (!room.isSpace) {
-      visibleIds.add(id);
+      if (visibleIds.add(id)) visibleRooms.add(room);
       return;
     }
     if (!visitedSpaces.add(id)) return;
@@ -277,9 +303,7 @@ List<MatrixRoom> matrixChatRoomsForSpace(
   }
 
   visit(spaceId);
-  return rooms
-      .where((room) => !room.isSpace && visibleIds.contains(room.id))
-      .toList(growable: false);
+  return visibleRooms;
 }
 
 final class MatrixMessage {

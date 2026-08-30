@@ -46,6 +46,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   MatrixConnectionPhase _connectionPhase = MatrixConnectionPhase.starting;
   MatrixAccount? _account;
   bool _initialized = false;
+  static const _spaceOrderEventType = 'chat.trace.space_order';
 
   @override
   MatrixClientSnapshot get current => _current;
@@ -336,6 +337,24 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   Future<void> leaveRoom(String roomId) => _room(roomId).leave();
 
   @override
+  Future<void> setRoomPinned(
+    String roomId, {
+    required bool pinned,
+    double? order,
+  }) => pinned
+      ? _room(roomId).addTag(matrix.TagType.favourite, order: order)
+      : _room(roomId).removeTag(matrix.TagType.favourite);
+
+  @override
+  Future<void> setSpaceOrder(List<String> spaceIds) async {
+    final userId = _client.userID;
+    if (userId == null) throw Exception('Sign in before ordering spaces.');
+    await _client.setAccountData(userId, _spaceOrderEventType, {
+      'room_ids': spaceIds,
+    });
+  }
+
+  @override
   Future<String> initializeRecovery(String passphrase) =>
       _client.initCryptoIdentity(passphrase: passphrase);
 
@@ -467,6 +486,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       phase: _connectionPhase,
       account: _account,
       rooms: _client.isLogged() ? _mapRooms() : const [],
+      spaceOrder: _spaceOrder,
       error: error,
     );
     _current = snapshot;
@@ -480,6 +500,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
           : MatrixConnectionPhase.error,
       account: _account,
       rooms: _client.isLogged() ? _mapRooms() : const [],
+      spaceOrder: _spaceOrder,
       error: _friendlyError(error),
     );
     _current = snapshot;
@@ -517,11 +538,20 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
                       .whereType<String>()
                       .toList(growable: false)
                 : const [],
+            isPinned: room.isFavourite,
+            pinOrder: room.tags[matrix.TagType.favourite]?.order,
           );
         })
         .toList(growable: false);
     rooms.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return rooms;
+  }
+
+  List<String> get _spaceOrder {
+    final ids = _client.accountData[_spaceOrderEventType]?.content['room_ids'];
+    return ids is List
+        ? ids.whereType<String>().toList(growable: false)
+        : const [];
   }
 
   String _eventPreview(matrix.Event event) {
