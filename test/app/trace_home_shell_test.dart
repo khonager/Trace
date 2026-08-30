@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/app/trace_app.dart';
+import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
   testWidgets('desktop shows both panes and lets the chat list collapse', (
@@ -270,6 +272,27 @@ void main() {
     expect(find.byKey(const Key('conversation-title-kai')), findsOneWidget);
   });
 
+  testWidgets('swiping a chat row starts loading before the swipe ends', (
+    tester,
+  ) async {
+    final client = _TimelineSpyClient([
+      _room(id: 'one', name: 'One'),
+      _room(id: 'two', name: 'Two'),
+    ]);
+    await tester.pumpWidget(MaterialApp(home: ChatsPage(client: client)));
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('conversation-row-1'))),
+    );
+    await gesture.moveBy(const Offset(-30, 0));
+    await tester.pump();
+
+    expect(client.openedRoomIds, contains('two'));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('overview cards contain right-aligned profiles and chat text', (
     tester,
   ) async {
@@ -435,4 +458,65 @@ void main() {
 
     expect(find.text('Prototype message'), findsOneWidget);
   });
+}
+
+MatrixRoom _room({required String id, required String name}) => MatrixRoom(
+  id: id,
+  name: name,
+  preview: '',
+  timestamp: DateTime.utc(2026, 1, 1),
+  membership: MatrixRoomMembership.joined,
+  unreadCount: 0,
+  encrypted: true,
+  isDirect: true,
+  directUserId: '@$id:example.org',
+);
+
+final class _TimelineSpyClient implements MatrixClientPort {
+  _TimelineSpyClient(List<MatrixRoom> rooms)
+    : current = MatrixClientSnapshot(
+        phase: MatrixConnectionPhase.ready,
+        rooms: rooms,
+      );
+
+  @override
+  final MatrixClientSnapshot current;
+
+  final List<String> openedRoomIds = [];
+
+  @override
+  Stream<MatrixClientSnapshot> get snapshots => const Stream.empty();
+
+  @override
+  Stream<MatrixVerificationPort> get verificationRequests =>
+      const Stream.empty();
+
+  @override
+  Future<MatrixTimelinePort> openTimeline(String roomId) async {
+    openedRoomIds.add(roomId);
+    return _EmptyTimeline();
+  }
+
+  @override
+  Future<void> markRead(String roomId) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _EmptyTimeline implements MatrixTimelinePort {
+  @override
+  bool get canLoadOlder => false;
+
+  @override
+  List<MatrixMessage> get current => const [];
+
+  @override
+  Stream<List<MatrixMessage>> get updates => const Stream.empty();
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -147,11 +147,14 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       ),
     ]);
     if (!mounted) return;
+    final previousIndex = open ? null : _manualBackgroundFromIndex;
+    if (previousIndex != null) {
+      _switchComposerTo(previousIndex);
+    }
+    if (!mounted) return;
     setState(() {
       if (open) {
         _conversations[_activeConversation].unreadCount = 0;
-      } else if (_manualBackgroundFromIndex case final previousIndex?) {
-        _activeConversation = previousIndex;
       }
       _manualBackgroundFromIndex = null;
     });
@@ -181,12 +184,14 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         _dragIsActive = false;
         return;
       }
-      setState(() {
-        _manualBackgroundFromIndex = index == _activeConversation
-            ? null
-            : _activeConversation;
-        _activeConversation = index;
-      });
+      final previousIndex = _activeConversation;
+      if (index == previousIndex) {
+        setState(() => _manualBackgroundFromIndex = null);
+      } else {
+        _switchComposerTo(index);
+        setState(() => _manualBackgroundFromIndex = previousIndex);
+      }
+      unawaited(_loadTimeline(index));
     }
     _dragIsActive = true;
   }
