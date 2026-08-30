@@ -26,6 +26,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   final ScrollController _overviewScrollController = ScrollController();
 
   late List<_Conversation> _conversations;
+  List<MatrixRoom> _allRooms = const [];
+  final Map<String, _Conversation> _conversationCache = {};
+  String? _selectedSpaceId;
   StreamSubscription<MatrixClientSnapshot>? _clientSubscription;
   final Map<String, MatrixTimelinePort> _timelines = {};
   final Map<String, StreamSubscription<List<MatrixMessage>>>
@@ -48,9 +51,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _allRooms = widget.client?.current.rooms ?? const [];
     _conversations = widget.client == null
         ? _mockConversations()
-        : _mapRooms(widget.client!.current.rooms);
+        : _mapRooms(matrixChatRoomsForSpace(_allRooms));
+    for (final conversation in _conversations) {
+      _conversationCache[conversation.id] = conversation;
+    }
     _clientSubscription = widget.client?.snapshots.listen((snapshot) {
       if (!mounted) return;
       _applyRooms(snapshot.rooms);
@@ -481,15 +488,26 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }
 
   void _applyRooms(List<MatrixRoom> rooms) {
-    final oldById = {for (final room in _conversations) room.id: room};
+    _allRooms = rooms;
+    final availableSpaceIds = _availableSpaces.map((space) => space.id).toSet();
+    if (_selectedSpaceId != null &&
+        !availableSpaceIds.contains(_selectedSpaceId)) {
+      _selectedSpaceId = null;
+    }
+    final oldById = _conversationCache;
     final activeId = _conversations.isEmpty
         ? null
         : _conversations[_activeConversation].id;
     final updated = <_Conversation>[];
-    for (final room in rooms) {
+    for (final room in matrixChatRoomsForSpace(
+      rooms,
+      spaceId: _selectedSpaceId,
+    )) {
       final existing = oldById[room.id];
       if (existing == null) {
-        updated.add(_conversationFromRoom(room));
+        final conversation = _conversationFromRoom(room);
+        _conversationCache[room.id] = conversation;
+        updated.add(conversation);
       } else {
         existing
           ..name = room.name
@@ -517,6 +535,20 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     if (_conversations.isNotEmpty) {
       unawaited(_loadTimeline(_activeConversation));
     }
+  }
+
+  List<MatrixRoom> get _availableSpaces => _allRooms
+      .where(
+        (room) =>
+            room.isSpace &&
+            matrixChatRoomsForSpace(_allRooms, spaceId: room.id).isNotEmpty,
+      )
+      .toList(growable: false);
+
+  void _selectSpace(String? spaceId) {
+    if (_selectedSpaceId == spaceId) return;
+    _selectedSpaceId = spaceId;
+    _applyRooms(_allRooms);
   }
 
   Future<void> _loadTimeline(int index) async {
@@ -708,6 +740,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               width: listWidth,
               child: _ChatOverview(
                 conversations: _conversations,
+                spaces: _availableSpaces,
+                selectedSpaceId: _selectedSpaceId,
+                onSpaceChanged: _selectSpace,
                 activeIndex: _activeConversation,
                 transitionProgress: 0,
                 avatarPromotion: 0,
@@ -817,6 +852,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                       width: overviewCardWidth,
                       child: _ChatOverview(
                         conversations: _conversations,
+                        spaces: _availableSpaces,
+                        selectedSpaceId: _selectedSpaceId,
+                        onSpaceChanged: _selectSpace,
                         activeIndex: _activeConversation,
                         transitionProgress: progress,
                         avatarPromotion: _avatarPromotion.value,
@@ -908,6 +946,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 class _ChatOverview extends StatelessWidget {
   const _ChatOverview({
     required this.conversations,
+    required this.spaces,
+    required this.selectedSpaceId,
+    required this.onSpaceChanged,
     required this.activeIndex,
     required this.transitionProgress,
     required this.avatarPromotion,
@@ -920,6 +961,9 @@ class _ChatOverview extends StatelessWidget {
   });
 
   final List<_Conversation> conversations;
+  final List<MatrixRoom> spaces;
+  final String? selectedSpaceId;
+  final ValueChanged<String?> onSpaceChanged;
   final int activeIndex;
   final double transitionProgress;
   final double avatarPromotion;
@@ -945,9 +989,52 @@ class _ChatOverview extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      'Chats',
-                      style: Theme.of(context).textTheme.headlineMedium,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            selectedSpaceId == null
+                                ? 'Chats'
+                                : spaces
+                                      .firstWhere(
+                                        (space) => space.id == selectedSpaceId,
+                                      )
+                                      .name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                        ),
+                        if (spaces.isNotEmpty)
+                          PopupMenuButton<String?>(
+                            key: const Key('space-filter'),
+                            tooltip: 'Choose a space',
+                            initialValue: selectedSpaceId,
+                            onSelected: onSpaceChanged,
+                            icon: const Icon(Icons.expand_more),
+                            itemBuilder: (context) => [
+                              const PopupMenuItem<String?>(
+                                value: null,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.forum_outlined),
+                                  title: Text('All chats'),
+                                ),
+                              ),
+                              for (final space in spaces)
+                                PopupMenuItem<String?>(
+                                  value: space.id,
+                                  child: ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const Icon(
+                                      Icons.workspaces_outline,
+                                    ),
+                                    title: Text(space.name),
+                                  ),
+                                ),
+                            ],
+                          ),
+                      ],
                     ),
                   ),
                   IconButton(

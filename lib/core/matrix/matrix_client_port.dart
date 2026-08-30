@@ -231,6 +231,8 @@ final class MatrixRoom {
     this.directUserId,
     this.avatarUrl,
     this.typingUsers = const [],
+    this.isSpace = false,
+    this.childRoomIds = const [],
   });
 
   final String id;
@@ -244,6 +246,40 @@ final class MatrixRoom {
   final String? directUserId;
   final Uri? avatarUrl;
   final List<String> typingUsers;
+  final bool isSpace;
+  final List<String> childRoomIds;
+}
+
+/// Returns chat rooms in a selected Matrix space, including nested spaces.
+/// Space rooms themselves are containers and are never returned as chats.
+List<MatrixRoom> matrixChatRoomsForSpace(
+  List<MatrixRoom> rooms, {
+  String? spaceId,
+}) {
+  if (spaceId == null) {
+    return rooms.where((room) => !room.isSpace).toList(growable: false);
+  }
+  final byId = {for (final room in rooms) room.id: room};
+  final visibleIds = <String>{};
+  final visitedSpaces = <String>{};
+
+  void visit(String id) {
+    final room = byId[id];
+    if (room == null) return;
+    if (!room.isSpace) {
+      visibleIds.add(id);
+      return;
+    }
+    if (!visitedSpaces.add(id)) return;
+    for (final childId in room.childRoomIds) {
+      visit(childId);
+    }
+  }
+
+  visit(spaceId);
+  return rooms
+      .where((room) => !room.isSpace && visibleIds.contains(room.id))
+      .toList(growable: false);
 }
 
 final class MatrixMessage {

@@ -510,6 +510,13 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
                 .where((user) => user.id != _client.userID)
                 .map((user) => user.calcDisplayname())
                 .toList(growable: false),
+            isSpace: room.isSpace,
+            childRoomIds: room.isSpace
+                ? room.spaceChildren
+                      .map((child) => child.roomId)
+                      .whereType<String>()
+                      .toList(growable: false)
+                : const [],
           );
         })
         .toList(growable: false);
