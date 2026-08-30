@@ -1,7 +1,7 @@
 # Trace
 
 Trace is groundwork for a privacy-first Matrix client built with Flutter. The
-initial targets are Android, iOS, and Linux. Product features are kept behind
+initial targets are Android, Linux, and web, with iOS planned. Product features are kept behind
 domain and platform boundaries so the visual interface can be redesigned
 without rewriting protocol code.
 
@@ -9,12 +9,14 @@ The client uses the Dart Matrix SDK with vodozemac end-to-end encryption. The
 SDK is AGPL-3.0-or-later; see the architecture notes before distributing a
 combined application.
 
-The repository currently contains an interactive chat prototype backed by mock
-data; the Matrix adapter is not connected to the presentation layer yet. See
+The application shell is now connected to a persistent Matrix client on
+Android, Linux, and web. It restores sessions, syncs real rooms and encrypted
+timelines, and can exchange text and files. The mock conversations remain only
+as the dependency-free widget-test fixture. See
 [`docs/product/PRODUCT_BRIEF.md`](docs/product/PRODUCT_BRIEF.md) for the agreed
 scope and [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
-for the dependency rules. The ordered work required for a usable Matrix build
-is tracked in [`docs/product/ALPHA_CHECKLIST.md`](docs/product/ALPHA_CHECKLIST.md).
+for the dependency rules. Remaining alpha work and platform limitations are
+tracked in [`docs/product/ALPHA_CHECKLIST.md`](docs/product/ALPHA_CHECKLIST.md).
 
 ## Development
 
@@ -27,12 +29,34 @@ flutter test
 flutter analyze
 ```
 
+Run one of the supported targets:
+
+```sh
+flutter run -d linux
+flutter run -d android
+flutter run -d chrome
+```
+
+Web end-to-end encryption uses the checked-in vodozemac bundle in `web/pkg`.
+Deploy the web build over HTTPS. Hosts may also need COOP/COEP response headers
+for browsers that require cross-origin isolation for WebAssembly threads.
+
 Without Nix, install Flutter 3.41 or newer, Rust through `rustup`, and the
 platform toolchains, then run the same Flutter commands. Rust is required to
 build the vodozemac encryption library.
 
 ## Status
 
-This is a visual and architectural prototype, not a usable Matrix client yet.
-Encrypted database implementations, Matrix session composition, production
-identifiers, branding, and distributable signing remain unresolved.
+This is an early Matrix chat alpha rather than a production messenger.
+Password and browser SSO login, session restore, encrypted room history,
+pagination, text/file sending, invitations, room/user/cached-message search,
+room creation and joining, Saved Messages, basic message actions, typing,
+receipts, and encryption recovery are wired.
+Push notifications, polished media rendering, device verification UI,
+production signing/branding, and encrypted-at-rest browser storage remain open.
+
+The Matrix SDK stores its native cache in SQLite and its web cache in IndexedDB.
+End-to-end encrypted event bodies remain ciphertext in that cache, but account
+metadata and access credentials are not transparently database-encrypted by the
+SDK on every target. Do not describe the current builds as offering full local
+database encryption.

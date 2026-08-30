@@ -53,6 +53,7 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
+find_program(PATCHELF_EXECUTABLE patchelf REQUIRED)
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -99,6 +100,17 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
+
+# Dart native assets are opened from inside the Flutter engine. Add the
+# bundle's lib directory to that engine's lookup path so packages such as
+# sqlite3 resolve their bundled .so when Trace is launched outside a shell.
+install(CODE "
+  execute_process(
+    COMMAND \"${PATCHELF_EXECUTABLE}\" --add-rpath \"\$ORIGIN\"
+      \"${INSTALL_BUNDLE_LIB_DIR}/libflutter_linux_gtk.so\"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  " COMPONENT Runtime)
 
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
   install(FILES "${bundled_library}"

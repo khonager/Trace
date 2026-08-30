@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/features/calls/presentation/calls_page.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 import 'package:trace/features/settings/presentation/settings_page.dart';
@@ -6,7 +7,9 @@ import 'package:trace/features/settings/presentation/settings_page.dart';
 enum TracePage { chats, calls, settings }
 
 class TraceHomeShell extends StatefulWidget {
-  const TraceHomeShell({super.key});
+  const TraceHomeShell({super.key, this.controller});
+
+  final MatrixSessionController? controller;
 
   @override
   State<TraceHomeShell> createState() => _TraceHomeShellState();
@@ -23,7 +26,11 @@ class _TraceHomeShellState extends State<TraceHomeShell> {
         child: Scaffold(
           body: IndexedStack(
             index: _page.index,
-            children: const [ChatsPage(), CallsPage(), SettingsPage()],
+            children: [
+              ChatsPage(client: widget.controller?.client),
+              const CallsPage(),
+              SettingsPage(controller: widget.controller),
+            ],
           ),
           bottomNavigationBar: NavigationBar(
             key: const Key('page-toolbar'),

@@ -1,13 +1,12 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show compute;
 import 'package:matrix/matrix.dart' as matrix;
+import 'package:matrix/encryption/utils/crypto_setup_extension.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/infrastructure/matrix/matrix_crypto_bootstrap.dart';
 
-/// Creates the selected Matrix Dart SDK client around an injected database.
-///
-/// Database construction stays outside this adapter because Trace requires an
-/// encrypted platform-specific store. Call [matrix.Client.init] on the result
-/// to restore a persisted session before presenting the application.
 matrix.Client createMatrixDartClient({
   required matrix.DatabaseApi database,
   String clientName = 'Trace',
@@ -27,61 +26,571 @@ matrix.Client createMatrixDartClient({
   );
 }
 
-/// Matrix implementation of the protocol-neutral application port.
-///
-/// SDK models stop here; features only receive Trace's own models.
 final class MatrixDartClientAdapter implements MatrixClientPort {
   MatrixDartClientAdapter(this._client);
 
   final matrix.Client _client;
+  final StreamController<MatrixClientSnapshot> _snapshots =
+      StreamController.broadcast();
+  final Map<String, _MatrixDartTimeline> _timelines = {};
+  final List<StreamSubscription<Object?>> _subscriptions = [];
+  MatrixClientSnapshot _current = const MatrixClientSnapshot.starting();
+  MatrixConnectionPhase _connectionPhase = MatrixConnectionPhase.starting;
+  MatrixAccount? _account;
+  bool _initialized = false;
 
   @override
-  Stream<MatrixSyncUpdate> get updates => _client.onSync.stream.map(
-    (update) => MatrixSyncUpdate(nextBatchToken: update.nextBatch),
-  );
+  MatrixClientSnapshot get current => _current;
+
+  @override
+  Stream<MatrixClientSnapshot> get snapshots => _snapshots.stream;
+
+  @override
+  Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+    _subscriptions.addAll([
+      _client.onSync.stream.listen((_) => _publish()),
+      _client.onSyncStatus.stream.listen(_handleSyncStatus),
+      _client.onLoginStateChanged.stream.listen(_handleLoginState),
+    ]);
+
+    try {
+      await _client.init(waitForFirstSync: false);
+      if (_client.isLogged()) {
+        _connectionPhase = MatrixConnectionPhase.syncing;
+        await _refreshAccount();
+      } else {
+        _connectionPhase = MatrixConnectionPhase.signedOut;
+      }
+      _publish();
+    } catch (error) {
+      _publishError(error);
+    }
+  }
 
   @override
   Future<void> login(MatrixLoginRequest request) async {
-    await _client.checkHomeserver(request.homeserver);
-
-    switch (request) {
-      case PasswordLoginRequest():
-        await _client.login(
-          matrix.AuthenticationTypes.password,
-          identifier: matrix.AuthenticationUserIdentifier(user: request.user),
-          password: request.password,
-          initialDeviceDisplayName: 'Trace',
-        );
-      case SsoLoginRequest():
-        await _client.login(
-          matrix.AuthenticationTypes.token,
-          token: request.loginToken,
-          initialDeviceDisplayName: 'Trace',
-        );
+    _connectionPhase = MatrixConnectionPhase.syncing;
+    _publish();
+    try {
+      await _client.checkHomeserver(request.homeserver);
+      switch (request) {
+        case PasswordLoginRequest():
+          await _client.login(
+            matrix.AuthenticationTypes.password,
+            identifier: matrix.AuthenticationUserIdentifier(user: request.user),
+            password: request.password,
+            initialDeviceDisplayName: 'Trace',
+          );
+        case SsoLoginRequest():
+          await _client.login(
+            matrix.AuthenticationTypes.token,
+            token: request.loginToken,
+            initialDeviceDisplayName: 'Trace',
+          );
+      }
+      await _refreshAccount();
+      _connectionPhase = MatrixConnectionPhase.syncing;
+      _publish();
+    } catch (error) {
+      _connectionPhase = MatrixConnectionPhase.signedOut;
+      _publishError(error);
+      rethrow;
     }
   }
 
   @override
-  Future<void> logout() => _client.logout();
+  Future<Uri> createSsoLoginUrl({
+    required Uri homeserver,
+    required Uri callback,
+  }) async {
+    await _client.checkHomeserver(homeserver);
+    final flows = await _client.getLoginFlows() ?? const <matrix.LoginFlow>[];
+    final supportsSso = flows.any(
+      (flow) => flow.type == matrix.AuthenticationTypes.sso,
+    );
+    if (!supportsSso) {
+      throw Exception('This homeserver does not offer browser sign-in.');
+    }
+    return homeserver.resolve(
+      '_matrix/client/v3/login/sso/redirect?redirectUrl=${Uri.encodeQueryComponent(callback.toString())}',
+    );
+  }
 
   @override
-  Future<void> sendText({required String roomId, required String body}) async {
+  Future<void> logout() async {
+    for (final timeline in _timelines.values.toList()) {
+      await timeline.close();
+    }
+    _timelines.clear();
+    await _client.logout();
+    _account = null;
+    _connectionPhase = MatrixConnectionPhase.signedOut;
+    _publish();
+  }
+
+  @override
+  Future<MatrixTimelinePort> openTimeline(String roomId) async {
+    final existing = _timelines[roomId];
+    if (existing != null) return existing;
+    final room = _room(roomId);
+    late final _MatrixDartTimeline timeline;
+    final sdkTimeline = await room.getTimeline(
+      onUpdate: () {
+        timeline.refresh();
+      },
+    );
+    timeline = _MatrixDartTimeline(
+      timeline: sdkTimeline,
+      ownUserId: _client.userID ?? '',
+      onClose: () => _timelines.remove(roomId),
+    );
+    _timelines[roomId] = timeline;
+    timeline.refresh();
+    return timeline;
+  }
+
+  @override
+  Future<void> sendText({
+    required String roomId,
+    required String body,
+    String? replyToEventId,
+  }) async {
+    final room = _room(roomId);
+    final replyTo = replyToEventId == null
+        ? null
+        : await room.getEventById(replyToEventId);
+    await room.sendTextEvent(
+      body,
+      txid: 'trace-${DateTime.now().microsecondsSinceEpoch}',
+      inReplyTo: replyTo,
+      displayPendingEvent: true,
+    );
+  }
+
+  @override
+  Future<void> editMessage({
+    required String roomId,
+    required String eventId,
+    required String body,
+  }) async {
+    await _room(roomId).sendTextEvent(
+      body,
+      editEventId: eventId,
+      txid: 'trace-edit-${DateTime.now().microsecondsSinceEpoch}',
+      displayPendingEvent: true,
+    );
+  }
+
+  @override
+  Future<void> react({
+    required String roomId,
+    required String eventId,
+    required String emoji,
+  }) async {
+    await _room(roomId).sendReaction(
+      eventId,
+      emoji,
+      txid: 'trace-reaction-${DateTime.now().microsecondsSinceEpoch}',
+    );
+  }
+
+  @override
+  Future<void> sendFile({
+    required String roomId,
+    required String name,
+    required Uint8List bytes,
+    required String mimeType,
+  }) async {
+    final file = matrix.MatrixFile(
+      bytes: bytes,
+      name: name,
+      mimeType: mimeType,
+    );
+    await _room(roomId).sendFileEvent(
+      file,
+      txid: 'trace-file-${DateTime.now().microsecondsSinceEpoch}',
+      displayPendingEvent: true,
+    );
+  }
+
+  @override
+  Future<void> setTyping(String roomId, bool typing) =>
+      _room(roomId).setTyping(typing, timeout: typing ? 5000 : null);
+
+  @override
+  Future<void> markRead(String roomId) async {
+    final room = _room(roomId);
+    final eventId = room.lastEvent?.eventId;
+    if (eventId != null && eventId.isNotEmpty) {
+      await room.setReadMarker(eventId, mRead: eventId);
+    }
+  }
+
+  @override
+  Future<List<MatrixUser>> searchUsers(String query) async {
+    final response = await _client.searchUserDirectory(query, limit: 30);
+    return response.results
+        .map(
+          (profile) => MatrixUser(
+            userId: profile.userId,
+            displayName: profile.displayName,
+            avatarUrl: _mediaUrl(profile.avatarUrl, width: 96, height: 96),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<MatrixMessageSearchResult>> searchMessages(String query) async {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return const [];
+    final results = <MatrixMessageSearchResult>[];
+    for (final room in _client.rooms.where(
+      (room) => room.membership == matrix.Membership.join,
+    )) {
+      var start = 0;
+      const batchSize = 200;
+      // Search the cached, already-processed timeline without creating a
+      // second plaintext index on disk. Cap each room to keep type-ahead fast.
+      while (start < 1000) {
+        final events = await _client.database.getEventList(
+          room,
+          start: start,
+          limit: batchSize,
+        );
+        for (final event in events) {
+          if (event.type != matrix.EventTypes.Message) continue;
+          final body = event.plaintextBody;
+          if (!body.toLowerCase().contains(needle)) continue;
+          results.add(
+            MatrixMessageSearchResult(
+              roomId: room.id,
+              roomName: room.getLocalizedDisplayname(),
+              eventId: event.eventId,
+              senderName: event.senderFromMemoryOrFallback.calcDisplayname(),
+              body: body,
+              timestamp: event.originServerTs,
+            ),
+          );
+        }
+        if (events.length < batchSize) break;
+        start += events.length;
+      }
+    }
+    results.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return results.take(80).toList(growable: false);
+  }
+
+  @override
+  Future<String> startDirectChat(String userId) =>
+      _client.startDirectChat(userId, enableEncryption: true);
+
+  @override
+  Future<String> joinRoom(String roomIdOrAlias) =>
+      _client.joinRoom(roomIdOrAlias.trim());
+
+  @override
+  Future<String> createSavedMessagesRoom() => _client.createGroupChat(
+    groupName: 'Saved Messages',
+    enableEncryption: true,
+  );
+
+  @override
+  Future<String> createGroup({
+    required String name,
+    List<String> invitees = const [],
+  }) => _client.createGroupChat(
+    groupName: name,
+    enableEncryption: true,
+    invite: invitees,
+  );
+
+  @override
+  Future<void> acceptInvite(String roomId) => _room(roomId).join();
+
+  @override
+  Future<void> declineInvite(String roomId) => _room(roomId).leave();
+
+  @override
+  Future<void> leaveRoom(String roomId) => _room(roomId).leave();
+
+  @override
+  Future<String> initializeRecovery(String passphrase) =>
+      _client.initCryptoIdentity(passphrase: passphrase);
+
+  @override
+  Future<void> restoreRecovery(String passphraseOrRecoveryKey) =>
+      _client.restoreCryptoIdentity(passphraseOrRecoveryKey);
+
+  @override
+  Future<List<MatrixDevice>> getDevices() async {
+    final devices = await _client.getDevices() ?? const <matrix.Device>[];
+    final deviceKeys = _client.userDeviceKeys[_client.userID]?.deviceKeys;
+    return devices
+        .map(
+          (device) => MatrixDevice(
+            id: device.deviceId,
+            name: device.displayName?.trim().isNotEmpty == true
+                ? device.displayName!.trim()
+                : device.deviceId,
+            isCurrent: device.deviceId == _client.deviceID,
+            verified: deviceKeys?[device.deviceId]?.verified ?? false,
+            lastSeen: device.lastSeenTs == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(device.lastSeenTs!),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> setForeground(bool foreground) async {
+    _client.backgroundSync = foreground;
+    if (foreground && _client.isLogged()) {
+      await _client.oneShotSync(timeout: Duration.zero);
+    }
+  }
+
+  matrix.Room _room(String roomId) {
     final room = _client.getRoomById(roomId);
-    if (room == null) {
-      throw MatrixRoomNotFoundException(roomId);
+    if (room == null) throw MatrixRoomNotFoundException(roomId);
+    return room;
+  }
+
+  Future<void> _refreshAccount() async {
+    final userId = _client.userID;
+    final homeserver = _client.homeserver;
+    if (userId == null || homeserver == null) return;
+    final profile = await _client.getProfileFromUserId(userId);
+    _account = MatrixAccount(
+      userId: userId,
+      displayName: profile.displayName?.trim().isNotEmpty == true
+          ? profile.displayName!.trim()
+          : userId,
+      homeserver: homeserver,
+      deviceId: _client.deviceID,
+      avatarUrl: _mediaUrl(profile.avatarUrl, width: 192, height: 192),
+    );
+  }
+
+  void _handleLoginState(matrix.LoginState state) {
+    switch (state) {
+      case matrix.LoginState.loggedIn:
+        _connectionPhase = MatrixConnectionPhase.syncing;
+        unawaited(_refreshAccount().then((_) => _publish()));
+      case matrix.LoginState.loggedOut:
+        _account = null;
+        _connectionPhase = MatrixConnectionPhase.signedOut;
+        _publish();
+      case matrix.LoginState.softLoggedOut:
+        _connectionPhase = MatrixConnectionPhase.softLoggedOut;
+        _publish();
     }
-    await room.sendTextEvent(body);
+  }
+
+  void _handleSyncStatus(matrix.SyncStatusUpdate update) {
+    switch (update.status) {
+      case matrix.SyncStatus.error:
+        _connectionPhase = MatrixConnectionPhase.reconnecting;
+      case matrix.SyncStatus.finished:
+        _connectionPhase = MatrixConnectionPhase.ready;
+      case matrix.SyncStatus.waitingForResponse:
+      case matrix.SyncStatus.processing:
+      case matrix.SyncStatus.cleaningUp:
+        if (_connectionPhase != MatrixConnectionPhase.ready) {
+          _connectionPhase = MatrixConnectionPhase.syncing;
+        }
+    }
+    _publish(error: update.error?.toString());
+  }
+
+  void _publish({String? error}) {
+    final snapshot = MatrixClientSnapshot(
+      phase: _connectionPhase,
+      account: _account,
+      rooms: _client.isLogged() ? _mapRooms() : const [],
+      error: error,
+    );
+    _current = snapshot;
+    if (!_snapshots.isClosed) _snapshots.add(snapshot);
+  }
+
+  void _publishError(Object error) {
+    final snapshot = MatrixClientSnapshot(
+      phase: _account == null
+          ? MatrixConnectionPhase.signedOut
+          : MatrixConnectionPhase.error,
+      account: _account,
+      rooms: _client.isLogged() ? _mapRooms() : const [],
+      error: _friendlyError(error),
+    );
+    _current = snapshot;
+    if (!_snapshots.isClosed) _snapshots.add(snapshot);
+  }
+
+  List<MatrixRoom> _mapRooms() {
+    final rooms = _client.rooms
+        .where((room) => room.membership != matrix.Membership.leave)
+        .map((room) {
+          final lastEvent = room.lastEvent;
+          return MatrixRoom(
+            id: room.id,
+            name: room.getLocalizedDisplayname(),
+            preview: lastEvent == null ? '' : lastEvent.plaintextBody,
+            timestamp: room.latestEventReceivedTime,
+            membership: switch (room.membership) {
+              matrix.Membership.invite => MatrixRoomMembership.invited,
+              matrix.Membership.leave => MatrixRoomMembership.left,
+              _ => MatrixRoomMembership.joined,
+            },
+            unreadCount: room.notificationCount,
+            encrypted: room.encrypted,
+            isDirect: room.isDirectChat,
+            directUserId: room.directChatMatrixID,
+            avatarUrl: _mediaUrl(room.avatar, width: 256, height: 256),
+            typingUsers: room.typingUsers
+                .where((user) => user.id != _client.userID)
+                .map((user) => user.calcDisplayname())
+                .toList(growable: false),
+          );
+        })
+        .toList(growable: false);
+    rooms.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return rooms;
+  }
+
+  Uri? _mediaUrl(Uri? mxc, {required int width, required int height}) {
+    if (mxc == null) return null;
+    if (!mxc.isScheme('mxc')) return mxc;
+    // Room snapshots are synchronous; the SDK's authenticated-media helper is
+    // asynchronous. This fallback remains valid for homeservers exposing the
+    // standard media endpoint and will be replaced by cached authenticated
+    // media URLs when that SDK API becomes snapshot-friendly.
+    // ignore: deprecated_member_use
+    return mxc.getThumbnail(
+      _client,
+      width: width,
+      height: height,
+      method: matrix.ThumbnailMethod.crop,
+      animated: true,
+    );
+  }
+
+  String _friendlyError(Object error) {
+    if (error is matrix.MatrixException) {
+      return error.errorMessage;
+    }
+    return error.toString().replaceFirst('Exception: ', '');
   }
 
   @override
-  Future<void> close() => _client.dispose();
+  Future<void> close() async {
+    for (final timeline in _timelines.values.toList()) {
+      await timeline.close();
+    }
+    for (final subscription in _subscriptions) {
+      await subscription.cancel();
+    }
+    await _client.dispose();
+    await _snapshots.close();
+  }
 }
 
-final class MatrixRoomNotFoundException implements Exception {
-  const MatrixRoomNotFoundException(this.roomId);
+final class _MatrixDartTimeline implements MatrixTimelinePort {
+  _MatrixDartTimeline({
+    required matrix.Timeline timeline,
+    required String ownUserId,
+    required void Function() onClose,
+  }) : _timeline = timeline,
+       _ownUserId = ownUserId,
+       _onClose = onClose;
 
-  final String roomId;
+  final matrix.Timeline _timeline;
+  final String _ownUserId;
+  final void Function() _onClose;
+  final StreamController<List<MatrixMessage>> _updates =
+      StreamController.broadcast();
+  List<MatrixMessage> _current = const [];
+  bool _closed = false;
 
   @override
-  String toString() => 'No joined Matrix room is cached for $roomId.';
+  List<MatrixMessage> get current => _current;
+
+  @override
+  Stream<List<MatrixMessage>> get updates => _updates.stream;
+
+  @override
+  bool get canLoadOlder => _timeline.canRequestHistory;
+
+  void refresh() {
+    if (_closed) return;
+    _current = _timeline.events
+        .where(_shouldShow)
+        .map(_mapEvent)
+        .toList(growable: false);
+    _updates.add(_current);
+  }
+
+  bool _shouldShow(matrix.Event event) =>
+      event.type == matrix.EventTypes.Message ||
+      event.type == matrix.EventTypes.Encrypted ||
+      event.type == matrix.EventTypes.RoomMember ||
+      event.type == matrix.EventTypes.RoomName ||
+      event.type == matrix.EventTypes.RoomTopic;
+
+  MatrixMessage _mapEvent(matrix.Event event) {
+    final undecryptable = event.type == matrix.EventTypes.Encrypted;
+    final system = event.type != matrix.EventTypes.Message && !undecryptable;
+    return MatrixMessage(
+      eventId: event.eventId,
+      senderId: event.senderId,
+      senderName: event.senderFromMemoryOrFallback.calcDisplayname(),
+      body: undecryptable
+          ? 'Unable to decrypt this message. Restore your recovery key or request the room key.'
+          : event.plaintextBody,
+      timestamp: event.originServerTs,
+      sentByMe: event.senderId == _ownUserId,
+      delivery: switch (event.status) {
+        matrix.EventStatus.sending => MatrixMessageDelivery.sending,
+        matrix.EventStatus.sent => MatrixMessageDelivery.sent,
+        matrix.EventStatus.error => MatrixMessageDelivery.failed,
+        matrix.EventStatus.synced => MatrixMessageDelivery.synced,
+      },
+      isSystem: system,
+      isUndecryptable: undecryptable,
+    );
+  }
+
+  @override
+  Future<void> loadOlder() async {
+    await _timeline.requestHistory(historyCount: 40);
+    refresh();
+  }
+
+  @override
+  Future<void> retry(String eventId) async {
+    final event = _timeline.events.firstWhere(
+      (event) => event.eventId == eventId,
+    );
+    await event.sendAgain();
+  }
+
+  @override
+  Future<void> redact(String eventId, {String? reason}) async {
+    final event = _timeline.events.firstWhere(
+      (event) => event.eventId == eventId,
+    );
+    await event.redactEvent(reason: reason);
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    _timeline.cancelSubscriptions();
+    _onClose();
+    await _updates.close();
+  }
 }

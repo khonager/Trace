@@ -17,8 +17,9 @@
           };
         };
         android = pkgs.androidenv.composeAndroidPackages {
-          platformVersions = [ "36" ];
-          buildToolsVersions = [ "36.0.0" ];
+          platformVersions = [ "35" "36" "37" ];
+          buildToolsVersions = [ "35.0.0" "37.0.0" ];
+          cmakeVersions = [ "3.22.1" ];
           includeNDK = true;
           ndkVersions = [ "28.2.13676358" ];
         };
@@ -34,6 +35,7 @@
             clang
             cmake
             ninja
+            patchelf
             pkg-config
             gtk3
             libsecret

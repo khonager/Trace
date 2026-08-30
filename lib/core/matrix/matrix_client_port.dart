@@ -1,15 +1,101 @@
-/// Stable boundary around whichever Matrix SDK is selected.
+import 'dart:typed_data';
+
+/// Protocol-neutral boundary around the selected Matrix SDK.
 ///
-/// The concrete SDK is intentionally not exposed to product features. This
-/// keeps licensing and SDK migration decisions out of the application layer.
+/// Widgets and product features only consume the immutable Trace models in
+/// this file. This keeps the SDK replaceable and makes the UI straightforward
+/// to test with a fake client.
 abstract interface class MatrixClientPort {
-  Stream<MatrixSyncUpdate> get updates;
+  MatrixClientSnapshot get current;
+
+  Stream<MatrixClientSnapshot> get snapshots;
+
+  Future<void> initialize();
 
   Future<void> login(MatrixLoginRequest request);
 
+  Future<Uri> createSsoLoginUrl({
+    required Uri homeserver,
+    required Uri callback,
+  });
+
   Future<void> logout();
 
-  Future<void> sendText({required String roomId, required String body});
+  Future<MatrixTimelinePort> openTimeline(String roomId);
+
+  Future<void> sendText({
+    required String roomId,
+    required String body,
+    String? replyToEventId,
+  });
+
+  Future<void> editMessage({
+    required String roomId,
+    required String eventId,
+    required String body,
+  });
+
+  Future<void> react({
+    required String roomId,
+    required String eventId,
+    required String emoji,
+  });
+
+  Future<void> sendFile({
+    required String roomId,
+    required String name,
+    required Uint8List bytes,
+    required String mimeType,
+  });
+
+  Future<void> setTyping(String roomId, bool typing);
+
+  Future<void> markRead(String roomId);
+
+  Future<List<MatrixUser>> searchUsers(String query);
+
+  Future<List<MatrixMessageSearchResult>> searchMessages(String query);
+
+  Future<String> startDirectChat(String userId);
+
+  Future<String> joinRoom(String roomIdOrAlias);
+
+  Future<String> createSavedMessagesRoom();
+
+  Future<String> createGroup({
+    required String name,
+    List<String> invitees = const [],
+  });
+
+  Future<void> acceptInvite(String roomId);
+
+  Future<void> declineInvite(String roomId);
+
+  Future<void> leaveRoom(String roomId);
+
+  Future<String> initializeRecovery(String passphrase);
+
+  Future<void> restoreRecovery(String passphraseOrRecoveryKey);
+
+  Future<List<MatrixDevice>> getDevices();
+
+  Future<void> setForeground(bool foreground);
+
+  Future<void> close();
+}
+
+abstract interface class MatrixTimelinePort {
+  List<MatrixMessage> get current;
+
+  Stream<List<MatrixMessage>> get updates;
+
+  bool get canLoadOlder;
+
+  Future<void> loadOlder();
+
+  Future<void> retry(String eventId);
+
+  Future<void> redact(String eventId, {String? reason});
 
   Future<void> close();
 }
@@ -34,13 +120,157 @@ final class PasswordLoginRequest extends MatrixLoginRequest {
 final class SsoLoginRequest extends MatrixLoginRequest {
   const SsoLoginRequest({required super.homeserver, required this.loginToken});
 
-  /// The short-lived token delivered to the app's callback URI after the
-  /// system browser completes the homeserver's SSO flow.
   final String loginToken;
 }
 
-final class MatrixSyncUpdate {
-  const MatrixSyncUpdate({required this.nextBatchToken});
+enum MatrixConnectionPhase {
+  starting,
+  signedOut,
+  syncing,
+  ready,
+  reconnecting,
+  softLoggedOut,
+  error,
+}
 
-  final String nextBatchToken;
+enum MatrixRoomMembership { joined, invited, left }
+
+enum MatrixMessageDelivery { sending, sent, failed, synced }
+
+final class MatrixClientSnapshot {
+  const MatrixClientSnapshot({
+    required this.phase,
+    this.account,
+    this.rooms = const [],
+    this.error,
+  });
+
+  const MatrixClientSnapshot.starting()
+    : this(phase: MatrixConnectionPhase.starting);
+
+  final MatrixConnectionPhase phase;
+  final MatrixAccount? account;
+  final List<MatrixRoom> rooms;
+  final String? error;
+
+  bool get isLoggedIn => account != null;
+}
+
+final class MatrixAccount {
+  const MatrixAccount({
+    required this.userId,
+    required this.displayName,
+    required this.homeserver,
+    this.deviceId,
+    this.avatarUrl,
+  });
+
+  final String userId;
+  final String displayName;
+  final Uri homeserver;
+  final String? deviceId;
+  final Uri? avatarUrl;
+}
+
+final class MatrixRoom {
+  const MatrixRoom({
+    required this.id,
+    required this.name,
+    required this.preview,
+    required this.timestamp,
+    required this.membership,
+    required this.unreadCount,
+    required this.encrypted,
+    required this.isDirect,
+    this.directUserId,
+    this.avatarUrl,
+    this.typingUsers = const [],
+  });
+
+  final String id;
+  final String name;
+  final String preview;
+  final DateTime timestamp;
+  final MatrixRoomMembership membership;
+  final int unreadCount;
+  final bool encrypted;
+  final bool isDirect;
+  final String? directUserId;
+  final Uri? avatarUrl;
+  final List<String> typingUsers;
+}
+
+final class MatrixMessage {
+  const MatrixMessage({
+    required this.eventId,
+    required this.senderId,
+    required this.senderName,
+    required this.body,
+    required this.timestamp,
+    required this.sentByMe,
+    required this.delivery,
+    this.isSystem = false,
+    this.isUndecryptable = false,
+  });
+
+  final String eventId;
+  final String senderId;
+  final String senderName;
+  final String body;
+  final DateTime timestamp;
+  final bool sentByMe;
+  final MatrixMessageDelivery delivery;
+  final bool isSystem;
+  final bool isUndecryptable;
+}
+
+final class MatrixUser {
+  const MatrixUser({required this.userId, this.displayName, this.avatarUrl});
+
+  final String userId;
+  final String? displayName;
+  final Uri? avatarUrl;
+}
+
+final class MatrixDevice {
+  const MatrixDevice({
+    required this.id,
+    required this.name,
+    required this.isCurrent,
+    required this.verified,
+    this.lastSeen,
+  });
+
+  final String id;
+  final String name;
+  final bool isCurrent;
+  final bool verified;
+  final DateTime? lastSeen;
+}
+
+final class MatrixMessageSearchResult {
+  const MatrixMessageSearchResult({
+    required this.roomId,
+    required this.roomName,
+    required this.eventId,
+    required this.senderName,
+    required this.body,
+    required this.timestamp,
+  });
+
+  final String roomId;
+  final String roomName;
+  final String eventId;
+  final String senderName;
+  final String body;
+  final DateTime timestamp;
+}
+
+final class MatrixRoomNotFoundException implements Exception {
+  const MatrixRoomNotFoundException(this.roomId);
+
+  final String roomId;
+
+  @override
+  String toString() => 'No Matrix room is cached for $roomId.';
 }

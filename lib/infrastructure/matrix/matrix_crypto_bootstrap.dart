@@ -1,6 +1,5 @@
-import 'dart:io';
-
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:trace/infrastructure/matrix/matrix_native_library_stub.dart'
+    if (dart.library.io) 'matrix_native_library_io.dart';
 import 'package:vodozemac/vodozemac.dart' as vodozemac;
 
 Future<void>? _initialization;
@@ -11,17 +10,8 @@ Future<void>? _initialization;
 /// encryption a startup prerequisite without loading the library twice.
 Future<void> initializeMatrixCrypto() {
   return _initialization ??= vodozemac.init(
-    libraryPath: _nativeLibraryPath(),
-    stem: !kIsWeb && (Platform.isIOS || Platform.isMacOS)
-        ? 'flutter_vodozemac'
-        : 'vodozemac_bindings_dart',
+    wasmPath: './pkg/',
+    libraryPath: matrixCryptoLibraryPath,
+    stem: matrixCryptoLibraryStem,
   );
-}
-
-String _nativeLibraryPath() {
-  if (!kIsWeb && Platform.isLinux) {
-    final executableDirectory = File(Platform.resolvedExecutable).parent.path;
-    return '$executableDirectory${Platform.pathSeparator}lib${Platform.pathSeparator}';
-  }
-  return './';
 }
