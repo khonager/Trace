@@ -163,6 +163,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     timeline = _MatrixDartTimeline(
       timeline: sdkTimeline,
       ownUserId: _client.userID ?? '',
+      mediaUrl: (mxc) => _mediaUrl(mxc, width: 96, height: 96),
       onClose: () => _timelines.remove(roomId),
     );
     _timelines[roomId] = timeline;
@@ -718,13 +719,16 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   _MatrixDartTimeline({
     required matrix.Timeline timeline,
     required String ownUserId,
+    required Uri? Function(Uri? mxc) mediaUrl,
     required void Function() onClose,
   }) : _timeline = timeline,
        _ownUserId = ownUserId,
+       _mediaUrl = mediaUrl,
        _onClose = onClose;
 
   final matrix.Timeline _timeline;
   final String _ownUserId;
+  final Uri? Function(Uri? mxc) _mediaUrl;
   final void Function() _onClose;
   final StreamController<List<MatrixMessage>> _updates =
       StreamController.broadcast();
@@ -758,10 +762,12 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   MatrixMessage _mapEvent(matrix.Event event) {
     final undecryptable = event.type == matrix.EventTypes.Encrypted;
     final system = event.type != matrix.EventTypes.Message && !undecryptable;
+    final sender = event.senderFromMemoryOrFallback;
     return MatrixMessage(
       eventId: event.eventId,
       senderId: event.senderId,
-      senderName: event.senderFromMemoryOrFallback.calcDisplayname(),
+      senderName: sender.calcDisplayname(),
+      senderAvatarUrl: _mediaUrl(sender.avatarUrl),
       body: undecryptable
           ? 'Unable to decrypt this message.'
           : system

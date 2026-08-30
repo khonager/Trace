@@ -1678,6 +1678,7 @@ class _ConversationView extends StatelessWidget {
                           conversation.messages.length - reverseIndex - 1;
                       return _MessageBubble(
                         message: conversation.messages[index],
+                        showSenderIdentity: !conversation.isDirect,
                         onLongPress: () =>
                             onMessageLongPress(conversation.messages[index]),
                         onRequestKey: () =>
@@ -1887,6 +1888,7 @@ class _ConversationBackground extends StatelessWidget {
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     required this.message,
+    required this.showSenderIdentity,
     required this.onLongPress,
     required this.onRequestKey,
     required this.onLoadAttachment,
@@ -1894,6 +1896,7 @@ class _MessageBubble extends StatefulWidget {
   });
 
   final _ChatMessage message;
+  final bool showSenderIdentity;
   final VoidCallback onLongPress;
   final VoidCallback onRequestKey;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
@@ -1926,139 +1929,197 @@ class _MessageBubbleState extends State<_MessageBubble> {
 
   @override
   Widget build(BuildContext context) {
+    final showSender =
+        widget.showSenderIdentity &&
+        !widget.message.sentByMe &&
+        !widget.message.isSystem;
     return Align(
       alignment: widget.message.sentByMe
           ? Alignment.centerRight
           : Alignment.centerLeft,
-      child: GestureDetector(
-        onTap:
-            widget.message.kind == MatrixMessageKind.text ||
-                widget.message.kind == MatrixMessageKind.image
-            ? null
-            : widget.onSaveAttachment,
-        onLongPress: widget.onLongPress,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 300),
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: widget.message.sentByMe
-                ? Theme.of(context).colorScheme.onSurface
-                : Theme.of(context).colorScheme.surfaceContainer,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: widget.message.sentByMe
-                  ? Theme.of(
-                      context,
-                    ).colorScheme.surface.withValues(alpha: 0.32)
-                  : Theme.of(
-                      context,
-                    ).colorScheme.outline.withValues(alpha: 0.65),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: 0.1),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (widget.message.kind == MatrixMessageKind.image)
-                _ImageAttachment(
-                  data: _image!,
-                  name: widget.message.attachmentName ?? widget.message.body,
-                  foreground: widget.message.sentByMe
-                      ? Theme.of(context).colorScheme.surface
-                      : Theme.of(context).colorScheme.onSurface,
-                  onRetry: () => setState(() {
-                    _image = widget.onLoadAttachment();
-                  }),
-                )
-              else if (widget.message.kind != MatrixMessageKind.text)
-                _FileAttachment(
-                  message: widget.message,
-                  foreground: widget.message.sentByMe
-                      ? Theme.of(context).colorScheme.surface
-                      : Theme.of(context).colorScheme.onSurface,
-                )
-              else
-                Text(
-                  widget.message.body,
-                  style: TextStyle(
-                    height: 1.3,
-                    fontStyle: widget.message.isSystem
-                        ? FontStyle.italic
-                        : null,
-                    color: widget.message.sentByMe
-                        ? Theme.of(context).colorScheme.surface
-                        : Theme.of(context).colorScheme.onSurface,
-                  ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showSender) ...[
+            _MessageSenderAvatar(message: widget.message),
+            const SizedBox(width: 7),
+          ],
+          Flexible(
+            child: GestureDetector(
+              onTap:
+                  widget.message.kind == MatrixMessageKind.text ||
+                      widget.message.kind == MatrixMessageKind.image
+                  ? null
+                  : widget.onSaveAttachment,
+              onLongPress: widget.onLongPress,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 300),
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
                 ),
-              if (widget.message.isUndecryptable) ...[
-                const SizedBox(height: 6),
-                if (widget.message.canRequestKey)
-                  TextButton.icon(
-                    key: Key('request-room-key-${widget.message.eventId}'),
-                    onPressed: widget.onRequestKey,
-                    icon: const Icon(Icons.key_outlined, size: 16),
-                    label: const Text('Request key'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: widget.message.sentByMe
-                          ? Theme.of(context).colorScheme.surface
-                          : Theme.of(context).colorScheme.onSurface,
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                    ),
-                  )
-                else
-                  Text(
-                    'Restore encryption recovery to access its room key.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: widget.message.sentByMe
-                          ? Theme.of(
-                              context,
-                            ).colorScheme.surface.withValues(alpha: 0.72)
-                          : Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.65),
-                    ),
-                  ),
-              ],
-              if (widget.message.delivery != null) ...[
-                const SizedBox(height: 3),
-                Text(
-                  switch (widget.message.delivery!) {
-                    MatrixMessageDelivery.sending => 'Sending…',
-                    MatrixMessageDelivery.failed => 'Failed · tap to retry',
-                    MatrixMessageDelivery.sent => 'Sent',
-                    MatrixMessageDelivery.synced => _formatMessageTime(
-                      widget.message.timestamp!,
-                    ),
-                  },
-                  style: TextStyle(
-                    fontSize: 10,
+                decoration: BoxDecoration(
+                  color: widget.message.sentByMe
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Theme.of(context).colorScheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
                     color: widget.message.sentByMe
                         ? Theme.of(
                             context,
-                          ).colorScheme.surface.withValues(alpha: 0.72)
+                          ).colorScheme.surface.withValues(alpha: 0.32)
                         : Theme.of(
                             context,
-                          ).colorScheme.onSurface.withValues(alpha: 0.65),
+                          ).colorScheme.outline.withValues(alpha: 0.65),
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              ],
-            ],
+                child: Column(
+                  crossAxisAlignment: widget.message.sentByMe
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  children: [
+                    if (showSender) ...[
+                      Text(
+                        widget.message.senderName ?? widget.message.senderId,
+                        key: Key(
+                          'message-sender-${widget.message.eventId ?? widget.message.senderId}',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    if (widget.message.kind == MatrixMessageKind.image)
+                      _ImageAttachment(
+                        data: _image!,
+                        name:
+                            widget.message.attachmentName ??
+                            widget.message.body,
+                        foreground: widget.message.sentByMe
+                            ? Theme.of(context).colorScheme.surface
+                            : Theme.of(context).colorScheme.onSurface,
+                        onRetry: () => setState(() {
+                          _image = widget.onLoadAttachment();
+                        }),
+                      )
+                    else if (widget.message.kind != MatrixMessageKind.text)
+                      _FileAttachment(
+                        message: widget.message,
+                        foreground: widget.message.sentByMe
+                            ? Theme.of(context).colorScheme.surface
+                            : Theme.of(context).colorScheme.onSurface,
+                      )
+                    else
+                      Text(
+                        widget.message.body,
+                        style: TextStyle(
+                          height: 1.3,
+                          fontStyle: widget.message.isSystem
+                              ? FontStyle.italic
+                              : null,
+                          color: widget.message.sentByMe
+                              ? Theme.of(context).colorScheme.surface
+                              : Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    if (widget.message.isUndecryptable) ...[
+                      const SizedBox(height: 6),
+                      if (widget.message.canRequestKey)
+                        TextButton.icon(
+                          key: Key(
+                            'request-room-key-${widget.message.eventId}',
+                          ),
+                          onPressed: widget.onRequestKey,
+                          icon: const Icon(Icons.key_outlined, size: 16),
+                          label: const Text('Request key'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: widget.message.sentByMe
+                                ? Theme.of(context).colorScheme.surface
+                                : Theme.of(context).colorScheme.onSurface,
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                        )
+                      else
+                        Text(
+                          'Restore encryption recovery to access its room key.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: widget.message.sentByMe
+                                ? Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withValues(alpha: 0.72)
+                                : Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.65),
+                          ),
+                        ),
+                    ],
+                    if (widget.message.delivery != null) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        switch (widget.message.delivery!) {
+                          MatrixMessageDelivery.sending => 'Sending…',
+                          MatrixMessageDelivery.failed =>
+                            'Failed · tap to retry',
+                          MatrixMessageDelivery.sent => 'Sent',
+                          MatrixMessageDelivery.synced => _formatMessageTime(
+                            widget.message.timestamp!,
+                          ),
+                        },
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: widget.message.sentByMe
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.surface.withValues(alpha: 0.72)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
+}
+
+class _MessageSenderAvatar extends StatelessWidget {
+  const _MessageSenderAvatar({required this.message});
+
+  final _ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: _InitialsAvatar(
+      key: Key('message-sender-avatar-${message.eventId ?? message.senderId}'),
+      initials: _initialsFor(message.senderName ?? message.senderId),
+      imageUrl: message.senderAvatarUrl,
+      diameter: 30,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+    ),
+  );
 }
 
 class _ImageAttachment extends StatelessWidget {
@@ -2993,6 +3054,8 @@ final class _ChatMessage {
     required this.sentByMe,
     this.eventId,
     this.senderName,
+    this.senderId = '',
+    this.senderAvatarUrl,
     this.timestamp,
     this.delivery,
     this.isSystem = false,
@@ -3009,6 +3072,8 @@ final class _ChatMessage {
     sentByMe: message.sentByMe,
     eventId: message.eventId,
     senderName: message.senderName,
+    senderId: message.senderId,
+    senderAvatarUrl: message.senderAvatarUrl,
     timestamp: message.timestamp,
     delivery: message.delivery,
     isSystem: message.isSystem || message.isUndecryptable,
@@ -3024,6 +3089,8 @@ final class _ChatMessage {
   final bool sentByMe;
   final String? eventId;
   final String? senderName;
+  final String senderId;
+  final Uri? senderAvatarUrl;
   final DateTime? timestamp;
   final MatrixMessageDelivery? delivery;
   final bool isSystem;
@@ -3038,6 +3105,7 @@ final class _ChatMessage {
 List<_Conversation> _mockConversations() => [
   _Conversation(
     id: 'maya',
+    isDirect: true,
     name: 'Maya',
     initials: 'MA',
     profileAsset: 'assets/profiles/maya.webp',
@@ -3059,6 +3127,7 @@ List<_Conversation> _mockConversations() => [
   ),
   _Conversation(
     id: 'kai',
+    isDirect: true,
     name: 'Kai',
     initials: 'KA',
     profileAsset: 'assets/profiles/kai.webp',
@@ -3085,7 +3154,12 @@ List<_Conversation> _mockConversations() => [
     time: '09:12',
     unreadCount: 1,
     messages: [
-      const _ChatMessage(body: 'Dinner is at seven.', sentByMe: false),
+      const _ChatMessage(
+        body: 'Dinner is at seven.',
+        sentByMe: false,
+        senderId: '@mom:example.org',
+        senderName: 'Mom',
+      ),
       const _ChatMessage(body: 'I will be there.', sentByMe: true),
     ],
   ),
@@ -3103,6 +3177,7 @@ List<_Conversation> _mockConversations() => [
   ),
   _Conversation(
     id: 'samir',
+    isDirect: true,
     name: 'Samir',
     initials: 'SA',
     profileAsset: 'assets/profiles/samir.webp',

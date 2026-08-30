@@ -155,6 +155,23 @@ void main() {
     );
   });
 
+  testWidgets('group messages show the sender name and avatar', (tester) async {
+    await tester.pumpWidget(const TraceApp());
+
+    await tester.tap(find.byKey(const Key('conversation-row-2')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('message-sender-@mom:example.org')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('message-sender-avatar-@mom:example.org')),
+      findsOneWidget,
+    );
+    expect(find.text('Mom'), findsOneWidget);
+  });
+
   testWidgets('profile photos become chat backgrounds with a plain fallback', (
     tester,
   ) async {
