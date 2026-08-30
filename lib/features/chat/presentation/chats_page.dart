@@ -323,6 +323,35 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _requestMessageKey(_ChatMessage message) async {
+    final eventId = message.eventId;
+    if (eventId == null || _conversations.isEmpty) return;
+    final roomId = _conversations[_activeConversation].id;
+    final timeline = _timelines[roomId];
+    if (timeline == null) return;
+    try {
+      await timeline.requestKey(eventId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Room key requested. Keep another verified Matrix device online.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not request the room key: '
+            '${error.toString().replaceFirst('Exception: ', '')}',
+          ),
+        ),
+      );
+    }
+  }
+
   Future<String?> _askForEdit(String current) async {
     final controller = TextEditingController(text: current);
     final result = await showDialog<String>(
@@ -674,6 +703,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onComposerChanged: _composerChanged,
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
+              onRequestMessageKey: _requestMessageKey,
               onLeave: widget.client == null ? null : _leaveCurrentRoom,
               replyLabel: _replyToLabel,
               onCancelReply: () => setState(() {
@@ -772,6 +802,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onComposerChanged: _composerChanged,
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
+                        onRequestMessageKey: _requestMessageKey,
                         onLeave: widget.client == null
                             ? null
                             : _leaveCurrentRoom,
@@ -1067,6 +1098,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
+    required this.onRequestMessageKey,
     required this.onLeave,
     required this.replyLabel,
     required this.onCancelReply,
@@ -1089,6 +1121,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
+  final ValueChanged<_ChatMessage> onRequestMessageKey;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final VoidCallback onCancelReply;
@@ -1113,6 +1146,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onComposerChanged: onComposerChanged,
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
+        onRequestMessageKey: onRequestMessageKey,
         onLeave: onLeave,
         replyLabel: replyLabel,
         onCancelReply: onCancelReply,
@@ -1221,6 +1255,7 @@ class _ConversationView extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
+    required this.onRequestMessageKey,
     required this.onLeave,
     required this.replyLabel,
     required this.onCancelReply,
@@ -1242,6 +1277,7 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
+  final ValueChanged<_ChatMessage> onRequestMessageKey;
   final VoidCallback? onLeave;
   final String? replyLabel;
   final VoidCallback onCancelReply;
@@ -1393,6 +1429,8 @@ class _ConversationView extends StatelessWidget {
                         message: conversation.messages[index],
                         onLongPress: () =>
                             onMessageLongPress(conversation.messages[index]),
+                        onRequestKey: () =>
+                            onRequestMessageKey(conversation.messages[index]),
                       );
                     },
                   ),
@@ -1589,10 +1627,15 @@ class _ConversationBackground extends StatelessWidget {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message, required this.onLongPress});
+  const _MessageBubble({
+    required this.message,
+    required this.onLongPress,
+    required this.onRequestKey,
+  });
 
   final _ChatMessage message;
   final VoidCallback onLongPress;
+  final VoidCallback onRequestKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1643,6 +1686,37 @@ class _MessageBubble extends StatelessWidget {
                       : Theme.of(context).colorScheme.onSurface,
                 ),
               ),
+              if (message.isUndecryptable) ...[
+                const SizedBox(height: 6),
+                if (message.canRequestKey)
+                  TextButton.icon(
+                    key: Key('request-room-key-${message.eventId}'),
+                    onPressed: onRequestKey,
+                    icon: const Icon(Icons.key_outlined, size: 16),
+                    label: const Text('Request key'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: message.sentByMe
+                          ? Theme.of(context).colorScheme.surface
+                          : Theme.of(context).colorScheme.onSurface,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                    ),
+                  )
+                else
+                  Text(
+                    'Restore encryption recovery to access its room key.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: message.sentByMe
+                          ? Theme.of(
+                              context,
+                            ).colorScheme.surface.withValues(alpha: 0.72)
+                          : Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+              ],
               if (message.delivery != null) ...[
                 const SizedBox(height: 3),
                 Text(
@@ -2401,6 +2475,8 @@ final class _ChatMessage {
     this.timestamp,
     this.delivery,
     this.isSystem = false,
+    this.isUndecryptable = false,
+    this.canRequestKey = false,
   });
 
   factory _ChatMessage.fromMatrix(MatrixMessage message) => _ChatMessage(
@@ -2411,6 +2487,8 @@ final class _ChatMessage {
     timestamp: message.timestamp,
     delivery: message.delivery,
     isSystem: message.isSystem || message.isUndecryptable,
+    isUndecryptable: message.isUndecryptable,
+    canRequestKey: message.canRequestKey,
   );
 
   final String body;
@@ -2420,6 +2498,8 @@ final class _ChatMessage {
   final DateTime? timestamp;
   final MatrixMessageDelivery? delivery;
   final bool isSystem;
+  final bool isUndecryptable;
+  final bool canRequestKey;
 }
 
 List<_Conversation> _mockConversations() => [

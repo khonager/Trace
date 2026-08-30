@@ -166,6 +166,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     );
     _timelines[roomId] = timeline;
     timeline.refresh();
+    unawaited(timeline.requestMissingKeys());
     return timeline;
   }
 
@@ -339,8 +340,10 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       _client.initCryptoIdentity(passphrase: passphrase);
 
   @override
-  Future<void> restoreRecovery(String passphraseOrRecoveryKey) =>
-      _client.restoreCryptoIdentity(passphraseOrRecoveryKey);
+  Future<void> restoreRecovery(String passphraseOrRecoveryKey) async {
+    await _client.restoreCryptoIdentity(passphraseOrRecoveryKey);
+    await _requestMissingKeysForOpenTimelines();
+  }
 
   @override
   Future<List<MatrixDevice>> getDevices() async {
@@ -386,9 +389,16 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     final verification = _MatrixDartVerification(
       request,
       onClose: (verification) => _verifications.remove(verification),
+      onVerified: _requestMissingKeysForOpenTimelines,
     );
     _verifications.add(verification);
     return verification;
+  }
+
+  Future<void> _requestMissingKeysForOpenTimelines() async {
+    await Future.wait(
+      _timelines.values.map((timeline) => timeline.requestMissingKeys()),
+    );
   }
 
   @override
@@ -552,20 +562,23 @@ final class _MatrixDartVerification implements MatrixVerificationPort {
   _MatrixDartVerification(
     this._request, {
     required void Function(_MatrixDartVerification verification) onClose,
-  }) : _onClose = onClose {
+    required Future<void> Function() onVerified,
+  }) : _onClose = onClose,
+       _onVerified = onVerified {
     _request.onUpdate = _emit;
   }
 
   final encryption.KeyVerification _request;
   final void Function(_MatrixDartVerification verification) _onClose;
+  final Future<void> Function() _onVerified;
   final StreamController<MatrixVerificationSnapshot> _updates =
       StreamController.broadcast();
   bool _closed = false;
+  bool _requestedMissingKeys = false;
 
   @override
   MatrixVerificationSnapshot get current {
-    final comparing =
-        _request.state == encryption.KeyVerificationState.askSas;
+    final comparing = _request.state == encryption.KeyVerificationState.askSas;
     final sasTypes = comparing ? _request.sasTypes : const <String>[];
     final phase = switch (_request.state) {
       encryption.KeyVerificationState.askAccept =>
@@ -599,9 +612,7 @@ final class _MatrixDartVerification implements MatrixVerificationPort {
                 )
                 .toList(growable: false)
           : const [],
-      numbers: sasTypes.contains('decimal')
-          ? _request.sasNumbers
-          : const [],
+      numbers: sasTypes.contains('decimal') ? _request.sasNumbers : const [],
       message: _request.canceledReason,
     );
   }
@@ -610,7 +621,14 @@ final class _MatrixDartVerification implements MatrixVerificationPort {
   Stream<MatrixVerificationSnapshot> get updates => _updates.stream;
 
   void _emit() {
-    if (!_closed) _updates.add(current);
+    if (_closed) return;
+    final snapshot = current;
+    _updates.add(snapshot);
+    if (snapshot.phase == MatrixVerificationPhase.done &&
+        !_requestedMissingKeys) {
+      _requestedMissingKeys = true;
+      unawaited(_onVerified());
+    }
   }
 
   @override
@@ -697,7 +715,7 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       senderId: event.senderId,
       senderName: event.senderFromMemoryOrFallback.calcDisplayname(),
       body: undecryptable
-          ? 'Unable to decrypt this message. Restore your recovery key or request the room key.'
+          ? 'Unable to decrypt this message.'
           : system
           ? event.calcLocalizedBodyFallback(
               const matrix.MatrixDefaultLocalizations(),
@@ -714,6 +732,8 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       },
       isSystem: system,
       isUndecryptable: undecryptable,
+      canRequestKey:
+          undecryptable && event.content['can_request_session'] == true,
     );
   }
 
@@ -729,6 +749,33 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       (event) => event.eventId == eventId,
     );
     await event.sendAgain();
+  }
+
+  @override
+  Future<void> requestKey(String eventId) async {
+    final event = _timeline.events.firstWhere(
+      (event) => event.eventId == eventId,
+    );
+    await event.requestKey();
+  }
+
+  Future<void> requestMissingKeys() async {
+    final requestedSessions = <String>{};
+    for (final event in _timeline.events) {
+      if (event.type != matrix.EventTypes.Encrypted ||
+          event.messageType != matrix.MessageTypes.BadEncrypted ||
+          event.content['can_request_session'] != true) {
+        continue;
+      }
+      final sessionId = event.content['session_id'] as String?;
+      if (sessionId == null || !requestedSessions.add(sessionId)) continue;
+      try {
+        await event.requestKey();
+      } catch (_) {
+        // A missing key may be absent from backup and offline devices. Keep
+        // the placeholder visible; users can retry the individual event.
+      }
+    }
   }
 
   @override

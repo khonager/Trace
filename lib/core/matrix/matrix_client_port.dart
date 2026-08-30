@@ -99,6 +99,8 @@ abstract interface class MatrixTimelinePort {
 
   Future<void> retry(String eventId);
 
+  Future<void> requestKey(String eventId);
+
   Future<void> redact(String eventId, {String? reason});
 
   Future<void> close();
@@ -244,6 +246,7 @@ final class MatrixMessage {
     required this.delivery,
     this.isSystem = false,
     this.isUndecryptable = false,
+    this.canRequestKey = false,
   });
 
   final String eventId;
@@ -255,6 +258,7 @@ final class MatrixMessage {
   final MatrixMessageDelivery delivery;
   final bool isSystem;
   final bool isUndecryptable;
+  final bool canRequestKey;
 }
 
 final class MatrixUser {
