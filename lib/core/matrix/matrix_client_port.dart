@@ -89,6 +89,10 @@ abstract interface class MatrixClientPort {
     int height = 96,
   });
 
+  /// Downloads the original bytes for Matrix content, using authenticated
+  /// media endpoints when the homeserver supports them.
+  Future<Uint8List> downloadMedia(Uri mxcUri);
+
   Future<String> initializeRecovery(String passphrase);
 
   Future<void> restoreRecovery(String passphraseOrRecoveryKey);
@@ -246,6 +250,7 @@ final class MatrixRoom {
     required this.isDirect,
     this.directUserId,
     this.avatarUrl,
+    this.avatarMediaUri,
     this.typingUsers = const [],
     this.isSpace = false,
     this.childRoomIds = const [],
@@ -263,6 +268,7 @@ final class MatrixRoom {
   final bool isDirect;
   final String? directUserId;
   final Uri? avatarUrl;
+  final Uri? avatarMediaUri;
   final List<String> typingUsers;
   final bool isSpace;
   final List<String> childRoomIds;

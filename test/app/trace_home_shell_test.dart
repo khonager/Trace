@@ -155,6 +155,23 @@ void main() {
     );
   });
 
+  testWidgets('profile pictures open in a downloadable full-size viewer', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(const TraceApp());
+    await tester.tap(find.byKey(const Key('open-profile-picture-maya')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('profile-picture-preview')), findsOneWidget);
+    expect(find.byKey(const Key('download-profile-picture')), findsOneWidget);
+    expect(find.text('Maya profile picture'), findsOneWidget);
+  });
+
   testWidgets('group messages show the sender name and avatar', (tester) async {
     await tester.pumpWidget(const TraceApp());
 

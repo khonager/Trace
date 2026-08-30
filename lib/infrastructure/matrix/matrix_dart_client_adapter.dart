@@ -40,6 +40,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   final StreamController<MatrixVerificationPort> _verificationRequests =
       StreamController.broadcast();
   final Map<String, _MatrixDartTimeline> _timelines = {};
+  final Map<String, Future<Uint8List>> _mediaDownloads = {};
   final Set<_MatrixDartVerification> _verifications = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   MatrixClientSnapshot _current = const MatrixClientSnapshot.starting();
@@ -143,6 +144,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       await timeline.close();
     }
     _timelines.clear();
+    _mediaDownloads.clear();
     await _client.logout();
     _account = null;
     _connectionPhase = MatrixConnectionPhase.signedOut;
@@ -359,12 +361,8 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     Uri mxcUri, {
     int width = 96,
     int height = 96,
-  }) async {
-    if (!mxcUri.isScheme('mxc') || mxcUri.host.isEmpty) {
-      throw Exception('Invalid Matrix media URI.');
-    }
-    final mediaId = mxcUri.pathSegments.join('/');
-    if (mediaId.isEmpty) throw Exception('Invalid Matrix media URI.');
+  }) => _cachedMedia('thumbnail:$width:$height:$mxcUri', () async {
+    final mediaId = _matrixMediaId(mxcUri);
     final response = await _client.getContentThumbnail(
       mxcUri.host,
       mediaId,
@@ -374,6 +372,46 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       animated: true,
     );
     return response.data;
+  });
+
+  @override
+  Future<Uint8List> downloadMedia(Uri mxcUri) =>
+      _cachedMedia('original:$mxcUri', () async {
+        final mediaId = _matrixMediaId(mxcUri);
+        final response = await _client.getContent(mxcUri.host, mediaId);
+        return response.data;
+      });
+
+  String _matrixMediaId(Uri mxcUri) {
+    if (!mxcUri.isScheme('mxc') || mxcUri.host.isEmpty) {
+      throw Exception('Invalid Matrix media URI.');
+    }
+    final mediaId = mxcUri.pathSegments.join('/');
+    if (mediaId.isEmpty) throw Exception('Invalid Matrix media URI.');
+    return mediaId;
+  }
+
+  Future<Uint8List> _cachedMedia(
+    String key,
+    Future<Uint8List> Function() load,
+  ) {
+    final cached = _mediaDownloads[key];
+    if (cached != null) return cached;
+    final download = load();
+    _mediaDownloads[key] = download;
+    unawaited(
+      download.then<void>(
+        (_) {
+          while (_mediaDownloads.length > 128) {
+            _mediaDownloads.remove(_mediaDownloads.keys.first);
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          _mediaDownloads.remove(key);
+        },
+      ),
+    );
+    return download;
   }
 
   @override
@@ -549,6 +587,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
             isDirect: room.isDirectChat,
             directUserId: room.directChatMatrixID,
             avatarUrl: _mediaUrl(room.avatar, width: 256, height: 256),
+            avatarMediaUri: room.avatar,
             typingUsers: room.typingUsers
                 .where((user) => user.id != _client.userID)
                 .map((user) => user.calcDisplayname())

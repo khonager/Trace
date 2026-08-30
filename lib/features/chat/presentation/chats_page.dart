@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show AsyncCallback;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:trace/core/matrix/matrix_client_port.dart';
 
 const double _overviewHeaderHeight = 132;
@@ -13,6 +14,9 @@ const double _chatRailWidth = 64;
 const double _chatPeekWidth = 28;
 const double _desktopSplitBreakpoint = 900;
 const String _peopleContextId = 'trace:people';
+
+typedef _OpenProfilePicture =
+    void Function({required String name, Uri? mediaUri, String? asset});
 
 class ChatsPage extends StatefulWidget {
   const ChatsPage({super.key, this.client});
@@ -384,6 +388,61 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     return client.downloadMediaThumbnail(uri);
   }
 
+  Future<void> _showProfilePicture({
+    required String name,
+    Uri? mediaUri,
+    String? asset,
+  }) async {
+    if (mediaUri == null && asset == null) return;
+    final image = mediaUri != null
+        ? widget.client!.downloadMedia(mediaUri)
+        : rootBundle
+              .load(asset!)
+              .then(
+                (data) => data.buffer.asUint8List(
+                  data.offsetInBytes,
+                  data.lengthInBytes,
+                ),
+              );
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _ProfilePictureDialog(
+        name: name,
+        image: image,
+        onDownload: (bytes) => _saveProfilePicture(name, bytes),
+      ),
+    );
+  }
+
+  Future<void> _saveProfilePicture(String name, Uint8List bytes) async {
+    try {
+      final format = _profileImageFormat(bytes);
+      final safeName = name
+          .trim()
+          .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-')
+          .replaceAll(RegExp(r'^-+|-+$'), '');
+      final fileName =
+          '${safeName.isEmpty ? 'profile' : safeName}-profile.${format.extension}';
+      final saved = await FilePicker.saveFile(
+        dialogTitle: 'Save $name profile picture',
+        fileName: fileName,
+        bytes: bytes,
+        mimeType: format.mimeType,
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$fileName saved.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save profile picture: ${_errorText(error)}'),
+        ),
+      );
+    }
+  }
+
   Future<void> _saveAttachment(_ChatMessage message) async {
     try {
       final attachment = await _loadAttachment(message);
@@ -528,6 +587,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           ..time = _formatRoomTime(room.timestamp)
           ..unreadCount = room.unreadCount
           ..profileUrl = room.avatarUrl
+          ..profileMediaUri = room.avatarMediaUri
           ..encrypted = room.encrypted
           ..membership = room.membership;
         existing
@@ -689,6 +749,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     unreadCount: room.unreadCount,
     messages: [],
     profileUrl: room.avatarUrl,
+    profileMediaUri: room.avatarMediaUri,
     encrypted: room.encrypted,
     membership: room.membership,
     typingLabel: room.typingUsers.isEmpty
@@ -866,6 +927,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onRequestMessageKey: _requestMessageKey,
               onLoadAttachment: _loadAttachment,
               onLoadMediaThumbnail: _loadMediaThumbnail,
+              onOpenProfilePicture: _showProfilePicture,
               onSaveAttachment: _saveAttachment,
               onTogglePinned: widget.client == null
                   ? null
@@ -977,6 +1039,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onRequestMessageKey: _requestMessageKey,
                         onLoadAttachment: _loadAttachment,
                         onLoadMediaThumbnail: _loadMediaThumbnail,
+                        onOpenProfilePicture: _showProfilePicture,
                         onSaveAttachment: _saveAttachment,
                         onTogglePinned: widget.client == null
                             ? null
@@ -1405,6 +1468,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
+    required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onTogglePinned,
     required this.onLeave,
@@ -1434,6 +1498,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
@@ -1464,6 +1529,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onRequestMessageKey: onRequestMessageKey,
         onLoadAttachment: onLoadAttachment,
         onLoadMediaThumbnail: onLoadMediaThumbnail,
+        onOpenProfilePicture: onOpenProfilePicture,
         onSaveAttachment: onSaveAttachment,
         onTogglePinned: onTogglePinned,
         onLeave: onLeave,
@@ -1578,6 +1644,7 @@ class _ConversationView extends StatelessWidget {
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
+    required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onTogglePinned,
     required this.onLeave,
@@ -1606,6 +1673,7 @@ class _ConversationView extends StatelessWidget {
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
@@ -1656,6 +1724,32 @@ class _ConversationView extends StatelessWidget {
                           : Icons.menu_rounded,
                     ),
                   ),
+                if (conversation.profileMediaUri != null ||
+                    conversation.profileAsset != null) ...[
+                  const SizedBox(width: 2),
+                  Tooltip(
+                    message: 'Open profile picture',
+                    child: InkWell(
+                      key: Key('open-profile-picture-${conversation.id}'),
+                      onTap: () => onOpenProfilePicture(
+                        name: conversation.name,
+                        mediaUri: conversation.profileMediaUri,
+                        asset: conversation.profileAsset,
+                      ),
+                      customBorder: const CircleBorder(),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: _InitialsAvatar(
+                          initials: conversation.initials,
+                          imageAsset: conversation.profileAsset,
+                          imageUrl: conversation.profileUrl,
+                          diameter: 34,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1786,6 +1880,7 @@ class _ConversationView extends StatelessWidget {
                           thumbnail: true,
                         ),
                         onLoadMediaThumbnail: onLoadMediaThumbnail,
+                        onOpenProfilePicture: onOpenProfilePicture,
                         onSaveAttachment: () =>
                             onSaveAttachment(conversation.messages[index]),
                       );
@@ -1992,6 +2087,7 @@ class _MessageBubble extends StatefulWidget {
     required this.onRequestKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
+    required this.onOpenProfilePicture,
     required this.onSaveAttachment,
   });
 
@@ -2001,6 +2097,7 @@ class _MessageBubble extends StatefulWidget {
   final VoidCallback onRequestKey;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final _OpenProfilePicture onOpenProfilePicture;
   final VoidCallback onSaveAttachment;
 
   @override
@@ -2046,6 +2143,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
             _MessageSenderAvatar(
               message: widget.message,
               onLoadMediaThumbnail: widget.onLoadMediaThumbnail,
+              onOpenProfilePicture: widget.onOpenProfilePicture,
             ),
             const SizedBox(width: 7),
           ],
@@ -2212,10 +2310,12 @@ class _MessageSenderAvatar extends StatefulWidget {
   const _MessageSenderAvatar({
     required this.message,
     required this.onLoadMediaThumbnail,
+    required this.onOpenProfilePicture,
   });
 
   final _ChatMessage message;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final _OpenProfilePicture onOpenProfilePicture;
 
   @override
   State<_MessageSenderAvatar> createState() => _MessageSenderAvatarState();
@@ -2257,24 +2357,38 @@ class _MessageSenderAvatarState extends State<_MessageSenderAvatar> {
         'message-sender-avatar-${widget.message.eventId ?? widget.message.senderId}',
       ),
       padding: const EdgeInsets.only(top: 2),
-      child: _image == null
-          ? fallback
-          : FutureBuilder<Uint8List>(
-              future: _image,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return fallback;
-                return ClipOval(
-                  child: Image.memory(
-                    snapshot.data!,
-                    width: 30,
-                    height: 30,
-                    fit: BoxFit.cover,
-                    filterQuality: FilterQuality.medium,
-                    errorBuilder: (_, _, _) => fallback,
-                  ),
-                );
-              },
-            ),
+      child: Tooltip(
+        message: widget.message.senderAvatarUrl == null
+            ? widget.message.senderName ?? widget.message.senderId
+            : 'Open ${widget.message.senderName ?? widget.message.senderId} profile picture',
+        child: InkWell(
+          onTap: widget.message.senderAvatarUrl == null
+              ? null
+              : () => widget.onOpenProfilePicture(
+                  name: widget.message.senderName ?? widget.message.senderId,
+                  mediaUri: widget.message.senderAvatarUrl,
+                ),
+          customBorder: const CircleBorder(),
+          child: _image == null
+              ? fallback
+              : FutureBuilder<Uint8List>(
+                  future: _image,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) return fallback;
+                    return ClipOval(
+                      child: Image.memory(
+                        snapshot.data!,
+                        width: 30,
+                        height: 30,
+                        fit: BoxFit.cover,
+                        filterQuality: FilterQuality.medium,
+                        errorBuilder: (_, _, _) => fallback,
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ),
     );
   }
 }
@@ -2548,6 +2662,120 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
             ),
           ),
         ],
+      ),
+    ),
+  );
+}
+
+class _ProfilePictureDialog extends StatefulWidget {
+  const _ProfilePictureDialog({
+    required this.name,
+    required this.image,
+    required this.onDownload,
+  });
+
+  final String name;
+  final Future<Uint8List> image;
+  final Future<void> Function(Uint8List bytes) onDownload;
+
+  @override
+  State<_ProfilePictureDialog> createState() => _ProfilePictureDialogState();
+}
+
+class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
+  bool _downloading = false;
+
+  Future<void> _download() async {
+    setState(() => _downloading = true);
+    try {
+      await widget.onDownload(await widget.image);
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    clipBehavior: Clip.antiAlias,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 760, maxHeight: 780),
+      child: SizedBox(
+        width: 760,
+        height: MediaQuery.sizeOf(context).height * .86,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 8, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${widget.name} profile picture',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('download-profile-picture'),
+                    tooltip: 'Download original',
+                    onPressed: _downloading ? null : _download,
+                    icon: _downloading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ColoredBox(
+                color: Colors.black,
+                child: Center(
+                  child: FutureBuilder<Uint8List>(
+                    future: widget.image,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'This profile picture could not be loaded.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        );
+                      }
+                      if (!snapshot.hasData) {
+                        return const CircularProgressIndicator();
+                      }
+                      return InteractiveViewer(
+                        minScale: .5,
+                        maxScale: 6,
+                        child: Image.memory(
+                          snapshot.data!,
+                          key: const Key('profile-picture-preview'),
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (_, _, _) => const Text(
+                            'This image format cannot be displayed.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -3169,6 +3397,38 @@ String _mimeTypeFor(String? extension) => switch (extension?.toLowerCase()) {
   _ => 'application/octet-stream',
 };
 
+({String extension, String mimeType}) _profileImageFormat(Uint8List bytes) {
+  bool startsWith(List<int> signature) {
+    if (bytes.length < signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (bytes[index] != signature[index]) return false;
+    }
+    return true;
+  }
+
+  if (startsWith(const [0x89, 0x50, 0x4e, 0x47])) {
+    return (extension: 'png', mimeType: 'image/png');
+  }
+  if (startsWith(const [0xff, 0xd8, 0xff])) {
+    return (extension: 'jpg', mimeType: 'image/jpeg');
+  }
+  if (startsWith(const [0x47, 0x49, 0x46, 0x38])) {
+    return (extension: 'gif', mimeType: 'image/gif');
+  }
+  if (bytes.length >= 12 &&
+      bytes[0] == 0x52 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x46 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    return (extension: 'webp', mimeType: 'image/webp');
+  }
+  return (extension: 'img', mimeType: 'application/octet-stream');
+}
+
 final class _Conversation {
   _Conversation({
     required this.id,
@@ -3180,6 +3440,7 @@ final class _Conversation {
     required this.messages,
     this.profileAsset,
     this.profileUrl,
+    this.profileMediaUri,
     this.encrypted = true,
     this.membership = MatrixRoomMembership.joined,
     this.typingLabel,
@@ -3197,6 +3458,7 @@ final class _Conversation {
   final List<_ChatMessage> messages;
   final String? profileAsset;
   Uri? profileUrl;
+  Uri? profileMediaUri;
   bool encrypted;
   MatrixRoomMembership membership;
   String? typingLabel;
