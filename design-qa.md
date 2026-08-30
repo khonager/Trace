@@ -2,6 +2,20 @@
 
 Final result: passed
 
+## Mobile header controls
+
+- The focused mobile chat no longer has a redundant back arrow; horizontal
+  swipe remains the route back to the full chat list.
+- Its replacement toggles the avatar tab rail between 64 pixels and zero while
+  expanding the conversation to use the reclaimed width.
+- Search and New chat now use the overview header's full width, with New chat
+  ending 10 pixels from the overview edge instead of reserving an empty rail.
+- Widget coverage verifies the missing back arrow, both rail widths, and the
+  exact header action inset.
+- Release capture: `/tmp/trace-mobile-header-controls-release-unlocked.png`.
+- Overview capture: `/tmp/trace-overview-header-qa.png`; it confirms the two
+  actions end at the intended 10-pixel inset with no reserved rail-width gap.
+
 ## Background switching
 
 - Tapping another chat uses a short 240 ms crossfade.

@@ -178,7 +178,7 @@ void main() {
     );
   });
 
-  testWidgets('conversation opens by tapping and closes back to overview', (
+  testWidgets('mobile chat rail can collapse without a back arrow', (
     tester,
   ) async {
     await tester.pumpWidget(const TraceApp());
@@ -187,10 +187,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('conversation-title-maya')), findsOneWidget);
     expect(find.byKey(const Key('neighbor-chat-rail')), findsNothing);
+    expect(find.byIcon(Icons.arrow_back), findsNothing);
 
-    await tester.tap(find.byKey(const Key('close-conversation')));
+    final pane = find.byKey(const Key('mobile-conversation-pane'));
+    expect(tester.getTopLeft(pane).dx, closeTo(64, 0.1));
+
+    await tester.tap(find.byKey(const Key('mobile-chat-rail-toggle')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('conversation-row-0')), findsOneWidget);
+    expect(tester.getTopLeft(pane).dx, closeTo(0, 0.1));
+    expect(find.byTooltip('Show chat tabs'), findsOneWidget);
+  });
+
+  testWidgets('chat header actions use the available width', (tester) async {
+    await tester.pumpWidget(const TraceApp());
+
+    final overview = tester.getRect(find.byKey(const Key('chat-overview')));
+    final newChat = tester.getRect(find.byKey(const Key('new-chat')));
+
+    expect(overview.right - newChat.right, closeTo(10, 0.1));
   });
 
   testWidgets('swiping a chat row opens that exact conversation', (

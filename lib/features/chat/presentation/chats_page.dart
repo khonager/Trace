@@ -22,6 +22,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   final List<_Conversation> _conversations = _mockConversations();
   late final AnimationController _workspaceTransition;
   late final AnimationController _avatarPromotion;
+  late final AnimationController _mobileRailCollapse;
   int _activeConversation = 0;
   bool _dragIsActive = false;
   bool _desktopListCollapsed = false;
@@ -37,6 +38,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 300),
     );
     _avatarPromotion = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _mobileRailCollapse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
@@ -61,6 +66,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void dispose() {
     _workspaceTransition.dispose();
     _avatarPromotion.dispose();
+    _mobileRailCollapse.dispose();
     _overviewScrollController.dispose();
     _composerController.dispose();
     super.dispose();
@@ -72,8 +78,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     });
     await _settleWorkspace(open: true);
   }
-
-  Future<void> _closeConversation() => _settleWorkspace(open: false);
 
   Future<void> _settleWorkspace({required bool open}) async {
     final target = open ? 1.0 : 0.0;
@@ -183,6 +187,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     setState(() => _desktopListCollapsed = !_desktopListCollapsed);
   }
 
+  Future<void> _toggleMobileRail() => _mobileRailCollapse.animateTo(
+    _mobileRailCollapse.value < 0.5 ? 1 : 0,
+    curve: Curves.easeOutCubic,
+  );
+
   Widget _buildDesktopWorkspace(BuildContext context, double width) {
     final listWidth = (width * 0.36).clamp(340.0, 430.0);
     final visibleListWidth = _desktopListCollapsed ? 0.0 : listWidth;
@@ -230,9 +239,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               conversations: _conversations,
               activeIndex: _activeConversation,
               composerController: _composerController,
-              onBack: _closeConversation,
               onSend: _sendMessage,
-              showBackButton: false,
+              showMobileRailToggle: false,
               onToggleList: _toggleDesktopList,
               listVisible: !_desktopListCollapsed,
               backgroundCanvasWidth: width,
@@ -252,9 +260,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           return _buildDesktopWorkspace(context, width);
         }
 
-        final initialWorkspaceLeft = width - _chatRailWidth - _chatPeekWidth;
+        final initialWorkspaceLeft = width - _chatPeekWidth;
         final overviewCardWidth = width - _chatPeekWidth;
-        _transitionTravel = initialWorkspaceLeft;
 
         return GestureDetector(
           key: const Key('chat-workspace'),
@@ -267,13 +274,18 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             animation: Listenable.merge([
               _workspaceTransition,
               _avatarPromotion,
+              _mobileRailCollapse,
               _overviewScrollController,
             ]),
             builder: (context, _) {
               final progress = _workspaceTransition.value;
-              final overviewLeft = -initialWorkspaceLeft * progress;
+              final visibleRailWidth =
+                  _chatRailWidth * (1 - _mobileRailCollapse.value);
+              final transitionTravel = initialWorkspaceLeft - visibleRailWidth;
+              _transitionTravel = transitionTravel;
+              final overviewLeft = -transitionTravel * progress;
               final conversationLeft =
-                  _chatRailWidth + initialWorkspaceLeft * (1 - progress);
+                  initialWorkspaceLeft - transitionTravel * progress;
               final scrollOffset = _overviewScrollController.hasClients
                   ? _overviewScrollController.offset
                   : 0.0;
@@ -291,22 +303,24 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         activeIndex: _activeConversation,
                         transitionProgress: progress,
                         avatarPromotion: _avatarPromotion.value,
-                        transitionTravel: initialWorkspaceLeft,
+                        transitionTravel: transitionTravel,
                         scrollController: _overviewScrollController,
                         onOpen: _openConversation,
                       ),
                     ),
                     Positioned(
+                      key: const Key('mobile-conversation-pane'),
                       left: conversationLeft,
                       top: 0,
                       bottom: 0,
-                      width: width - _chatRailWidth,
+                      width: width - visibleRailWidth,
                       child: _FocusedChatWorkspace(
                         conversations: _conversations,
                         activeIndex: _activeConversation,
                         composerController: _composerController,
-                        onBack: _closeConversation,
                         onSend: _sendMessage,
+                        onToggleMobileRail: _toggleMobileRail,
+                        mobileRailVisible: _mobileRailCollapse.value < 0.5,
                         backgroundCanvasWidth: width,
                         backgroundPageLeft: conversationLeft,
                         swipeBackgroundFrom: _manualBackgroundFromIndex == null
@@ -325,7 +339,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                           overviewWidth: overviewCardWidth,
                           overviewLeft: overviewLeft,
                           transitionProgress: progress,
-                          transitionTravel: initialWorkspaceLeft,
+                          transitionTravel: transitionTravel,
                         ),
                         top: _lerp(
                           _overviewHeaderHeight +
@@ -380,6 +394,7 @@ class _ChatOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
+      key: const Key('chat-overview'),
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -387,7 +402,7 @@ class _ChatOverview extends StatelessWidget {
           SizedBox(
             height: _overviewHeaderHeight,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, _chatRailWidth + 8, 8),
+              padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
               child: Row(
                 children: [
                   Expanded(
@@ -397,6 +412,7 @@ class _ChatOverview extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    key: const Key('search-chats'),
                     tooltip: 'Search',
                     onPressed: () {},
                     icon: const Icon(Icons.search),
@@ -408,6 +424,7 @@ class _ChatOverview extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   IconButton(
+                    key: const Key('new-chat'),
                     tooltip: 'New chat',
                     onPressed: () {},
                     icon: const Icon(Icons.edit_square),
@@ -580,9 +597,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.conversations,
     required this.activeIndex,
     required this.composerController,
-    required this.onBack,
     required this.onSend,
-    this.showBackButton = true,
+    this.showMobileRailToggle = true,
+    this.onToggleMobileRail,
+    this.mobileRailVisible = true,
     this.onToggleList,
     this.listVisible = true,
     required this.backgroundCanvasWidth,
@@ -594,9 +612,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final List<_Conversation> conversations;
   final int activeIndex;
   final TextEditingController composerController;
-  final VoidCallback onBack;
   final VoidCallback onSend;
-  final bool showBackButton;
+  final bool showMobileRailToggle;
+  final VoidCallback? onToggleMobileRail;
+  final bool mobileRailVisible;
   final VoidCallback? onToggleList;
   final bool listVisible;
   final double backgroundCanvasWidth;
@@ -610,9 +629,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
       child: _ConversationView(
         conversation: conversations[activeIndex],
         composerController: composerController,
-        onBack: onBack,
         onSend: onSend,
-        showBackButton: showBackButton,
+        showMobileRailToggle: showMobileRailToggle,
+        onToggleMobileRail: onToggleMobileRail,
+        mobileRailVisible: mobileRailVisible,
         onToggleList: onToggleList,
         listVisible: listVisible,
         backgroundCanvasWidth: backgroundCanvasWidth,
@@ -709,9 +729,10 @@ class _ConversationView extends StatelessWidget {
   const _ConversationView({
     required this.conversation,
     required this.composerController,
-    required this.onBack,
     required this.onSend,
-    required this.showBackButton,
+    required this.showMobileRailToggle,
+    required this.onToggleMobileRail,
+    required this.mobileRailVisible,
     required this.onToggleList,
     required this.listVisible,
     required this.backgroundCanvasWidth,
@@ -722,9 +743,10 @@ class _ConversationView extends StatelessWidget {
 
   final _Conversation conversation;
   final TextEditingController composerController;
-  final VoidCallback onBack;
   final VoidCallback onSend;
-  final bool showBackButton;
+  final bool showMobileRailToggle;
+  final VoidCallback? onToggleMobileRail;
+  final bool mobileRailVisible;
   final VoidCallback? onToggleList;
   final bool listVisible;
   final double backgroundCanvasWidth;
@@ -742,12 +764,18 @@ class _ConversationView extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
             child: Row(
               children: [
-                if (showBackButton)
+                if (showMobileRailToggle)
                   IconButton(
-                    key: const Key('close-conversation'),
-                    tooltip: 'All chats',
-                    onPressed: onBack,
-                    icon: const Icon(Icons.arrow_back),
+                    key: const Key('mobile-chat-rail-toggle'),
+                    tooltip: mobileRailVisible
+                        ? 'Hide chat tabs'
+                        : 'Show chat tabs',
+                    onPressed: onToggleMobileRail,
+                    icon: Icon(
+                      mobileRailVisible
+                          ? Icons.menu_open_rounded
+                          : Icons.menu_rounded,
+                    ),
                   )
                 else
                   IconButton(
