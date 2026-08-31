@@ -31,9 +31,11 @@ typedef _OpenProfilePicture =
     void Function({required String name, Uri? mediaUri, String? asset});
 
 class ChatsPage extends StatefulWidget {
-  const ChatsPage({super.key, this.client});
+  const ChatsPage({super.key, this.client, this.saveAttachment});
 
   final MatrixClientPort? client;
+  final Future<String?> Function(MatrixAttachmentData attachment)?
+  saveAttachment;
 
   @override
   State<ChatsPage> createState() => _ChatsPageState();
@@ -545,12 +547,28 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   Future<void> _saveAttachment(_ChatMessage message) async {
     try {
       final attachment = await _loadAttachment(message);
-      final saved = await FilePicker.saveFile(
-        dialogTitle: 'Save ${attachment.name}',
-        fileName: attachment.name,
-        bytes: attachment.bytes,
-        mimeType: attachment.mimeType,
+      await _saveAttachmentData(attachment);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save attachment: ${_errorText(error)}'),
+        ),
       );
+    }
+  }
+
+  Future<void> _saveAttachmentData(MatrixAttachmentData attachment) async {
+    try {
+      final saveAttachment = widget.saveAttachment;
+      final saved = saveAttachment == null
+          ? await FilePicker.saveFile(
+              dialogTitle: 'Save ${attachment.name}',
+              fileName: attachment.name,
+              bytes: attachment.bytes,
+              mimeType: attachment.mimeType,
+            )
+          : await saveAttachment(attachment);
       if (!mounted || saved == null) return;
       ScaffoldMessenger.of(
         context,
@@ -563,6 +581,18 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         ),
       );
     }
+  }
+
+  Future<void> _showImage(_ChatMessage message) async {
+    final image = _loadAttachment(message);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _ReceivedImageDialog(
+        name: message.attachmentName ?? message.body,
+        image: image,
+        onDownload: _saveAttachmentData,
+      ),
+    );
   }
 
   Future<String?> _askForEdit(String current) async {
@@ -1072,6 +1102,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onLoadMediaThumbnail: _loadMediaThumbnail,
               onOpenProfilePicture: _showProfilePicture,
               onSaveAttachment: _saveAttachment,
+              onOpenImage: _showImage,
               messageKeyFor: _messageKeyFor,
               onOpenReply: _openReply,
               onTogglePinned: widget.client == null
@@ -1204,6 +1235,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onLoadMediaThumbnail: _loadMediaThumbnail,
                         onOpenProfilePicture: _showProfilePicture,
                         onSaveAttachment: _saveAttachment,
+                        onOpenImage: _showImage,
                         messageKeyFor: _messageKeyFor,
                         onOpenReply: _openReply,
                         onTogglePinned: widget.client == null
@@ -1701,6 +1733,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.onOpenImage,
     required this.messageKeyFor,
     required this.onOpenReply,
     required this.onTogglePinned,
@@ -1733,6 +1766,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final ValueChanged<_ChatMessage> onOpenImage;
   final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
@@ -1766,6 +1800,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onLoadMediaThumbnail: onLoadMediaThumbnail,
         onOpenProfilePicture: onOpenProfilePicture,
         onSaveAttachment: onSaveAttachment,
+        onOpenImage: onOpenImage,
         messageKeyFor: messageKeyFor,
         onOpenReply: onOpenReply,
         onTogglePinned: onTogglePinned,
@@ -1883,6 +1918,7 @@ class _ConversationView extends StatelessWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.onOpenImage,
     required this.messageKeyFor,
     required this.onOpenReply,
     required this.onTogglePinned,
@@ -1914,6 +1950,7 @@ class _ConversationView extends StatelessWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final ValueChanged<_ChatMessage> onOpenImage;
   final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
@@ -2124,6 +2161,7 @@ class _ConversationView extends StatelessWidget {
                         onLoadMediaThumbnail: onLoadMediaThumbnail,
                         onOpenProfilePicture: onOpenProfilePicture,
                         onSaveAttachment: () => onSaveAttachment(message),
+                        onOpenImage: () => onOpenImage(message),
                         onOpenReply: replyToEventId != null
                             ? () => onOpenReply(replyToEventId)
                             : null,
@@ -2334,6 +2372,7 @@ class _MessageBubble extends StatefulWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.onOpenImage,
     required this.onOpenReply,
   });
 
@@ -2345,6 +2384,7 @@ class _MessageBubble extends StatefulWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final VoidCallback onSaveAttachment;
+  final VoidCallback onOpenImage;
   final VoidCallback? onOpenReply;
 
   @override
@@ -2480,6 +2520,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         onRetry: () => setState(() {
                           _image = widget.onLoadAttachment();
                         }),
+                        onOpen: widget.onOpenImage,
                       )
                     else if (widget.message.kind != MatrixMessageKind.text)
                       _FileAttachment(
@@ -2756,12 +2797,14 @@ class _ImageAttachment extends StatelessWidget {
     required this.name,
     required this.foreground,
     required this.onRetry,
+    required this.onOpen,
   });
 
   final Future<MatrixAttachmentData> data;
   final String name;
   final Color foreground;
   final VoidCallback onRetry;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -2772,16 +2815,25 @@ class _ImageAttachment extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.memory(
-                  snapshot.data!.bytes,
-                  key: Key('message-image-$name'),
-                  fit: BoxFit.cover,
-                  width: 272,
-                  errorBuilder: (_, _, _) => _AttachmentError(
-                    foreground: foreground,
-                    onRetry: onRetry,
+              Semantics(
+                button: true,
+                label: 'Open $name',
+                child: InkWell(
+                  onTap: onOpen,
+                  borderRadius: BorderRadius.circular(10),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.memory(
+                      snapshot.data!.bytes,
+                      key: Key('message-image-$name'),
+                      fit: BoxFit.cover,
+                      width: 272,
+                      height: 180,
+                      errorBuilder: (_, _, _) => _AttachmentError(
+                        foreground: foreground,
+                        onRetry: onRetry,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -3017,6 +3069,127 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
                   trailing: const Icon(Icons.drag_handle),
                 );
               },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ReceivedImageDialog extends StatefulWidget {
+  const _ReceivedImageDialog({
+    required this.name,
+    required this.image,
+    required this.onDownload,
+  });
+
+  final String name;
+  final Future<MatrixAttachmentData> image;
+  final Future<void> Function(MatrixAttachmentData attachment) onDownload;
+
+  @override
+  State<_ReceivedImageDialog> createState() => _ReceivedImageDialogState();
+}
+
+class _ReceivedImageDialogState extends State<_ReceivedImageDialog> {
+  bool _downloading = false;
+
+  Future<void> _download() async {
+    setState(() => _downloading = true);
+    try {
+      await widget.onDownload(await widget.image);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This image could not be downloaded.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog.fullscreen(
+    backgroundColor: Colors.black,
+    child: SafeArea(
+      child: Column(
+        children: [
+          Material(
+            color: Colors.black,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleMedium?.copyWith(color: Colors.white),
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('download-received-image'),
+                    tooltip: 'Download original',
+                    color: Colors.white,
+                    onPressed: _downloading ? null : _download,
+                    icon: _downloading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.download_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    color: Colors.white,
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: FutureBuilder<MatrixAttachmentData>(
+                future: widget.image,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'This image could not be loaded.',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    );
+                  }
+                  if (!snapshot.hasData) {
+                    return const CircularProgressIndicator(color: Colors.white);
+                  }
+                  return InteractiveViewer(
+                    minScale: .5,
+                    maxScale: 8,
+                    child: Image.memory(
+                      snapshot.data!.bytes,
+                      key: const Key('received-image-preview'),
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, _, _) => const Text(
+                        'This image format cannot be displayed.',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],

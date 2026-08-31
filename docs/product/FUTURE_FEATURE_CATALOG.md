@@ -36,7 +36,7 @@ stabilize, or be abandoned.
 
 Implementation audit: 2026-08-31, against Trace `main`. A checked feature means
 there is a reachable production code path, not merely SDK support or a
-mock-only demonstration. This snapshot marks 72 of 444 individually scoped
+mock-only demonstration. This snapshot marks 74 of 444 individually scoped
 items as implemented.
 
 ## Text messaging and composition
@@ -124,8 +124,8 @@ items as implemented.
 - [x] `MATRIX+TRACE` Render image messages inline
 - [ ] `MATRIX+TRACE` Full-screen received-image viewer
 - [ ] `MATRIX+TRACE` Zoom, pan, rotate, slideshow, and gallery navigation
-- [ ] `MATRIX+TRACE` Open received images
-- [ ] `MATRIX+TRACE` Download or save-as received images
+- [x] `MATRIX+TRACE` Open received images
+- [x] `MATRIX+TRACE` Download or save-as received images
 - [ ] `MATRIX+TRACE` Copy received images
 - [ ] `MATRIX+TRACE` Share received images
 - [ ] `MATRIX+TRACE` Share received media directly to another room or application
