@@ -119,6 +119,13 @@ abstract interface class MatrixTimelinePort {
 
   Future<void> requestKey(String eventId);
 
+  /// Adds, replaces, or removes the current user's reaction.
+  ///
+  /// Selecting the current emoji removes it. Selecting a different emoji
+  /// replaces the current reaction, matching the single-reaction behavior of
+  /// common messaging apps.
+  Future<void> toggleReaction(String eventId, String emoji);
+
   /// Downloads and decrypts media belonging to a timeline event.
   ///
   /// Image previews request a thumbnail when the event provides one and fall
@@ -344,6 +351,7 @@ final class MatrixMessage {
     this.isSystem = false,
     this.isUndecryptable = false,
     this.canRequestKey = false,
+    this.reactionByMe,
   });
 
   final String eventId;
@@ -361,6 +369,7 @@ final class MatrixMessage {
   final bool isSystem;
   final bool isUndecryptable;
   final bool canRequestKey;
+  final String? reactionByMe;
 }
 
 final class MatrixAttachmentData {

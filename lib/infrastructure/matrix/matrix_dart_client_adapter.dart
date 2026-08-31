@@ -861,7 +861,22 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       isUndecryptable: undecryptable,
       canRequestKey:
           undecryptable && event.content['can_request_session'] == true,
+      reactionByMe: _ownReaction(event),
     );
+  }
+
+  String? _ownReaction(matrix.Event event) {
+    for (final reaction in event.aggregatedEvents(
+      _timeline,
+      matrix.RelationshipTypes.reaction,
+    )) {
+      if (reaction.senderId != _ownUserId || reaction.redacted) continue;
+      final relatesTo = reaction.content['m.relates_to'];
+      if (relatesTo is! Map) continue;
+      final key = relatesTo['key'];
+      if (key is String && key.isNotEmpty) return key;
+    }
+    return null;
   }
 
   Future<void> _loadSender(matrix.Event event) async {
@@ -917,6 +932,50 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       (event) => event.eventId == eventId,
     );
     await event.requestKey();
+  }
+
+  @override
+  Future<void> toggleReaction(String eventId, String emoji) async {
+    final key = emoji.trim();
+    if (key.isEmpty) throw ArgumentError.value(emoji, 'emoji', 'is empty');
+    try {
+      await _timeline.fetchAggregatedEvents(
+        eventId,
+        matrix.RelationshipTypes.reaction,
+      );
+    } catch (_) {
+      // The synced aggregation is still enough to add or change a reaction
+      // when an older homeserver cannot serve the relations endpoint.
+    }
+    final event = _timeline.events.firstWhere(
+      (event) => event.eventId == eventId,
+    );
+    final ownReactions = event
+        .aggregatedEvents(_timeline, matrix.RelationshipTypes.reaction)
+        .where((reaction) => reaction.senderId == _ownUserId)
+        .where((reaction) => !reaction.redacted)
+        .toList(growable: false);
+    final alreadySelected = ownReactions.any(
+      (reaction) => _reactionKey(reaction) == key,
+    );
+
+    if (!alreadySelected) {
+      await _timeline.room.sendReaction(
+        eventId,
+        key,
+        txid: 'trace-reaction-${DateTime.now().microsecondsSinceEpoch}',
+      );
+    }
+    for (final reaction in ownReactions) {
+      await reaction.redactEvent();
+    }
+  }
+
+  String? _reactionKey(matrix.Event reaction) {
+    final relatesTo = reaction.content['m.relates_to'];
+    if (relatesTo is! Map) return null;
+    final key = relatesTo['key'];
+    return key is String ? key : null;
   }
 
   Future<void> requestMissingKeys() async {

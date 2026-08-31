@@ -14,6 +14,18 @@ const double _chatRailWidth = 64;
 const double _chatPeekWidth = 28;
 const double _desktopSplitBreakpoint = 900;
 const String _peopleContextId = 'trace:people';
+const List<String> _commonReactions = [
+  '👍',
+  '❤️',
+  '😂',
+  '😮',
+  '😢',
+  '🙏',
+  '🎉',
+  '🔥',
+];
+
+enum _ReactionPickerAction { custom }
 
 typedef _OpenProfilePicture =
     void Function({required String name, Uri? mediaUri, String? asset});
@@ -290,8 +302,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onTap: () => Navigator.pop(context, 'reply'),
             ),
             ListTile(
-              leading: const Text('👍', style: TextStyle(fontSize: 23)),
-              title: const Text('React'),
+              leading: Text(
+                message.reactionByMe ?? '👍',
+                style: const TextStyle(fontSize: 23),
+              ),
+              title: Text(
+                message.reactionByMe == null ? 'React' : 'Change reaction',
+              ),
               onTap: () => Navigator.pop(context, 'react'),
             ),
             if (message.sentByMe)
@@ -322,7 +339,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             _replyToLabel = 'Replying to ${message.senderName ?? 'message'}';
           });
         case 'react':
-          await client.react(roomId: roomId, eventId: eventId, emoji: '👍');
+          final emoji = await _chooseReaction(message.reactionByMe);
+          if (emoji == null || !mounted) return;
+          final timeline = _timelines[roomId];
+          if (timeline == null) return;
+          await timeline.toggleReaction(eventId, emoji);
         case 'edit':
           final edited = await _askForEdit(message.body);
           if (edited != null) {
@@ -342,6 +363,78 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         );
       }
     }
+  }
+
+  Future<String?> _chooseReaction(String? selectedEmoji) async {
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Choose a reaction',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final emoji in _commonReactions)
+                    ChoiceChip(
+                      key: Key('reaction-$emoji'),
+                      label: Text(emoji, style: const TextStyle(fontSize: 24)),
+                      selected: selectedEmoji == emoji,
+                      tooltip: selectedEmoji == emoji
+                          ? 'Remove $emoji reaction'
+                          : 'React with $emoji',
+                      onSelected: (_) => Navigator.pop(context, emoji),
+                    ),
+                  if (selectedEmoji != null &&
+                      !_commonReactions.contains(selectedEmoji))
+                    ChoiceChip(
+                      key: const Key('current-custom-reaction'),
+                      label: Text(
+                        selectedEmoji,
+                        style: const TextStyle(fontSize: 24),
+                      ),
+                      selected: true,
+                      tooltip: 'Remove $selectedEmoji reaction',
+                      onSelected: (_) => Navigator.pop(context, selectedEmoji),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                key: const Key('custom-reaction'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.add_reaction_outlined),
+                title: const Text('Use another emoji'),
+                subtitle: const Text('Paste or type any emoji'),
+                onTap: () =>
+                    Navigator.pop(context, _ReactionPickerAction.custom),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (choice == _ReactionPickerAction.custom) {
+      return mounted ? _askForCustomReaction() : null;
+    }
+    return choice as String?;
+  }
+
+  Future<String?> _askForCustomReaction() async {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => const _CustomReactionDialog(),
+    );
   }
 
   Future<void> _requestMessageKey(_ChatMessage message) async {
@@ -1507,6 +1600,56 @@ class _ConversationRow extends StatelessWidget {
   }
 }
 
+class _CustomReactionDialog extends StatefulWidget {
+  const _CustomReactionDialog();
+
+  @override
+  State<_CustomReactionDialog> createState() => _CustomReactionDialogState();
+}
+
+class _CustomReactionDialogState extends State<_CustomReactionDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  void _submit() {
+    final emoji = _controller.text.trim();
+    if (emoji.isNotEmpty) Navigator.pop(context, emoji);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Custom reaction'),
+    content: TextField(
+      key: const Key('custom-reaction-input'),
+      controller: _controller,
+      autofocus: true,
+      maxLength: 64,
+      textInputAction: TextInputAction.done,
+      decoration: const InputDecoration(
+        hintText: 'Emoji',
+        helperText: 'One emoji or emoji sequence',
+      ),
+      onSubmitted: (_) => _submit(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('confirm-custom-reaction'),
+        onPressed: _submit,
+        child: const Text('React'),
+      ),
+    ],
+  );
+}
+
 class _FocusedChatWorkspace extends StatelessWidget {
   const _FocusedChatWorkspace({
     required this.conversations,
@@ -2323,6 +2466,30 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           ),
                         ),
                     ],
+                    if (widget.message.reactionByMe != null) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        key: Key(
+                          'my-reaction-${widget.message.eventId ?? widget.message.senderId}',
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.message.sentByMe
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.surface.withValues(alpha: 0.16)
+                              : Theme.of(context).colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          widget.message.reactionByMe!,
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ],
                     if (widget.message.delivery != null) ...[
                       const SizedBox(height: 3),
                       Text(
@@ -2697,8 +2864,9 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
           Expanded(
             child: ReorderableListView.builder(
               itemCount: _spaces.length,
-              onReorderItem: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
                 setState(() {
+                  if (newIndex > oldIndex) newIndex -= 1;
                   _spaces.insert(newIndex, _spaces.removeAt(oldIndex));
                 });
               },
@@ -3536,6 +3704,7 @@ final class _ChatMessage {
     this.attachmentName,
     this.attachmentMimeType,
     this.attachmentSize,
+    this.reactionByMe,
   });
 
   factory _ChatMessage.fromMatrix(MatrixMessage message) => _ChatMessage(
@@ -3554,6 +3723,7 @@ final class _ChatMessage {
     attachmentName: message.attachmentName,
     attachmentMimeType: message.attachmentMimeType,
     attachmentSize: message.attachmentSize,
+    reactionByMe: message.reactionByMe,
   );
 
   final String body;
@@ -3571,6 +3741,7 @@ final class _ChatMessage {
   final String? attachmentName;
   final String? attachmentMimeType;
   final int? attachmentSize;
+  final String? reactionByMe;
 }
 
 List<_Conversation> _mockConversations() => [

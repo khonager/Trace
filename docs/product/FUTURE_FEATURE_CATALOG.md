@@ -34,10 +34,10 @@ and the [Matrix specification-change process](https://spec.matrix.org/proposals/
 Re-check `MSC` labels before implementation because proposals can change,
 stabilize, or be abandoned.
 
-Implementation audit: 2026-08-30, against Trace `main` after commit
-`f4b509d`. A checked feature means there is a reachable production code path,
-not merely SDK support or a mock-only demonstration. This snapshot marks 70
-of 444 individually scoped items as implemented.
+Implementation audit: 2026-08-31, against Trace `main`. A checked feature means
+there is a reachable production code path, not merely SDK support or a
+mock-only demonstration. This snapshot marks 71 of 444 individually scoped
+items as implemented.
 
 ## Text messaging and composition
 
@@ -92,7 +92,7 @@ of 444 individually scoped items as implemented.
 ## Reactions, GIFs, stickers, and expressive content
 
 - [x] `MATRIX` Send a basic emoji reaction
-- [ ] `MATRIX` Add and remove arbitrary emoji reactions
+- [x] `MATRIX` Add and remove arbitrary emoji reactions
 - [ ] `MATRIX` Inspect who reacted
 - [ ] `MATRIX` Multiple reactions per user
 - [ ] `MATRIX` Reaction summary and complete reactor list
