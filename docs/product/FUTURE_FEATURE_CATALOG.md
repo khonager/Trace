@@ -36,7 +36,7 @@ stabilize, or be abandoned.
 
 Implementation audit: 2026-08-31, against Trace `main`. A checked feature means
 there is a reachable production code path, not merely SDK support or a
-mock-only demonstration. This snapshot marks 71 of 444 individually scoped
+mock-only demonstration. This snapshot marks 72 of 444 individually scoped
 items as implemented.
 
 ## Text messaging and composition
@@ -64,7 +64,7 @@ items as implemented.
 - [ ] `MATRIX+TRACE` Forward one or several messages
 - [ ] `MATRIX+TRACE` Quote selected text from a message
 - [x] `MATRIX` Reply to a specific message
-- [ ] `MATRIX+TRACE` Reply preview and jump-to-original behavior
+- [x] `MATRIX+TRACE` Reply preview and jump-to-original behavior
 - [ ] `MATRIX` Threads and thread-only notification settings
 - [ ] `TRACE` Split a discussion into a new thread or room
 - [ ] `TRACE` Select and perform bulk actions on messages

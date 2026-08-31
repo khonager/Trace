@@ -50,6 +50,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   List<String> _spaceOrder = const [];
   StreamSubscription<MatrixClientSnapshot>? _clientSubscription;
   final Map<String, MatrixTimelinePort> _timelines = {};
+  final Map<String, GlobalKey<_MessageBubbleState>> _messageKeys = {};
   final Map<String, StreamSubscription<List<MatrixMessage>>>
   _timelineSubscriptions = {};
   final Map<String, String> _drafts = {};
@@ -845,7 +846,38 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       _conversations[index].messages
         ..clear()
         ..addAll(messages.reversed.map(_ChatMessage.fromMatrix));
+      final visibleEventIds = _conversations
+          .expand((conversation) => conversation.messages)
+          .map((message) => message.eventId)
+          .whereType<String>()
+          .toSet();
+      _messageKeys.removeWhere(
+        (eventId, _) => !visibleEventIds.contains(eventId),
+      );
     });
+  }
+
+  GlobalKey<_MessageBubbleState> _messageKeyFor(String eventId) => _messageKeys
+      .putIfAbsent(eventId, () => GlobalKey(debugLabel: 'message-$eventId'));
+
+  void _openReply(String eventId) {
+    final targetContext = _messageKeys[eventId]?.currentContext;
+    if (targetContext == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The original message is not loaded yet.'),
+        ),
+      );
+      return;
+    }
+    unawaited(
+      Scrollable.ensureVisible(
+        targetContext,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        alignment: .5,
+      ),
+    );
   }
 
   List<_Conversation> _mapRooms(List<MatrixRoom> rooms) =>
@@ -1040,6 +1072,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onLoadMediaThumbnail: _loadMediaThumbnail,
               onOpenProfilePicture: _showProfilePicture,
               onSaveAttachment: _saveAttachment,
+              messageKeyFor: _messageKeyFor,
+              onOpenReply: _openReply,
               onTogglePinned: widget.client == null
                   ? null
                   : () => _togglePinned(_conversations[_activeConversation]),
@@ -1170,6 +1204,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onLoadMediaThumbnail: _loadMediaThumbnail,
                         onOpenProfilePicture: _showProfilePicture,
                         onSaveAttachment: _saveAttachment,
+                        messageKeyFor: _messageKeyFor,
+                        onOpenReply: _openReply,
                         onTogglePinned: widget.client == null
                             ? null
                             : () => _togglePinned(
@@ -1665,6 +1701,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.messageKeyFor,
+    required this.onOpenReply,
     required this.onTogglePinned,
     required this.onLeave,
     required this.replyLabel,
@@ -1695,6 +1733,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
+  final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
   final String? replyLabel;
@@ -1726,6 +1766,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onLoadMediaThumbnail: onLoadMediaThumbnail,
         onOpenProfilePicture: onOpenProfilePicture,
         onSaveAttachment: onSaveAttachment,
+        messageKeyFor: messageKeyFor,
+        onOpenReply: onOpenReply,
         onTogglePinned: onTogglePinned,
         onLeave: onLeave,
         replyLabel: replyLabel,
@@ -1841,6 +1883,8 @@ class _ConversationView extends StatelessWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.messageKeyFor,
+    required this.onOpenReply,
     required this.onTogglePinned,
     required this.onLeave,
     required this.replyLabel,
@@ -1870,6 +1914,8 @@ class _ConversationView extends StatelessWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
+  final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
+  final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
   final String? replyLabel;
@@ -2063,21 +2109,24 @@ class _ConversationView extends StatelessWidget {
                     itemBuilder: (context, reverseIndex) {
                       final index =
                           conversation.messages.length - reverseIndex - 1;
+                      final message = conversation.messages[index];
+                      final replyToEventId = message.replyToEventId;
                       return _MessageBubble(
-                        message: conversation.messages[index],
+                        key: message.eventId == null
+                            ? null
+                            : messageKeyFor(message.eventId!),
+                        message: message,
                         showSenderIdentity: !conversation.isDirect,
-                        onLongPress: () =>
-                            onMessageLongPress(conversation.messages[index]),
-                        onRequestKey: () =>
-                            onRequestMessageKey(conversation.messages[index]),
-                        onLoadAttachment: () => onLoadAttachment(
-                          conversation.messages[index],
-                          thumbnail: true,
-                        ),
+                        onLongPress: () => onMessageLongPress(message),
+                        onRequestKey: () => onRequestMessageKey(message),
+                        onLoadAttachment: () =>
+                            onLoadAttachment(message, thumbnail: true),
                         onLoadMediaThumbnail: onLoadMediaThumbnail,
                         onOpenProfilePicture: onOpenProfilePicture,
-                        onSaveAttachment: () =>
-                            onSaveAttachment(conversation.messages[index]),
+                        onSaveAttachment: () => onSaveAttachment(message),
+                        onOpenReply: replyToEventId != null
+                            ? () => onOpenReply(replyToEventId)
+                            : null,
                       );
                     },
                   ),
@@ -2276,6 +2325,7 @@ class _ConversationBackground extends StatelessWidget {
 
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
+    super.key,
     required this.message,
     required this.showSenderIdentity,
     required this.onLongPress,
@@ -2284,6 +2334,7 @@ class _MessageBubble extends StatefulWidget {
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
+    required this.onOpenReply,
   });
 
   final _ChatMessage message;
@@ -2294,6 +2345,7 @@ class _MessageBubble extends StatefulWidget {
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final VoidCallback onSaveAttachment;
+  final VoidCallback? onOpenReply;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -2402,6 +2454,19 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         ),
                       ),
                       const SizedBox(height: 4),
+                    ],
+                    if (widget.message.replyToEventId != null) ...[
+                      _ReplyPreview(
+                        eventId: widget.message.replyToEventId!,
+                        senderName:
+                            widget.message.replyToSenderName ?? 'Message',
+                        body:
+                            widget.message.replyToBody ??
+                            'Original message unavailable',
+                        sentByMe: widget.message.sentByMe,
+                        onTap: widget.onOpenReply,
+                      ),
+                      const SizedBox(height: 7),
                     ],
                     if (widget.message.kind == MatrixMessageKind.image)
                       _ImageAttachment(
@@ -2522,6 +2587,77 @@ class _MessageBubbleState extends State<_MessageBubble> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ReplyPreview extends StatelessWidget {
+  const _ReplyPreview({
+    required this.eventId,
+    required this.senderName,
+    required this.body,
+    required this.sentByMe,
+    required this.onTap,
+  });
+
+  final String eventId;
+  final String senderName;
+  final String body;
+  final bool sentByMe;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = sentByMe
+        ? Theme.of(context).colorScheme.surface
+        : Theme.of(context).colorScheme.onSurface;
+    return Semantics(
+      button: onTap != null,
+      label: 'Reply to $senderName: $body',
+      child: InkWell(
+        key: Key('reply-preview-$eventId'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
+          decoration: BoxDecoration(
+            color: foreground.withValues(alpha: .1),
+            border: Border(
+              left: BorderSide(
+                color: sentByMe
+                    ? Theme.of(context).colorScheme.surface
+                    : Theme.of(context).colorScheme.primary,
+                width: 3,
+              ),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                senderName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                body,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foreground.withValues(alpha: .78),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3707,6 +3843,9 @@ final class _ChatMessage {
     this.attachmentMimeType,
     this.attachmentSize,
     this.reactionByMe,
+    this.replyToEventId,
+    this.replyToSenderName,
+    this.replyToBody,
   });
 
   factory _ChatMessage.fromMatrix(MatrixMessage message) => _ChatMessage(
@@ -3726,6 +3865,9 @@ final class _ChatMessage {
     attachmentMimeType: message.attachmentMimeType,
     attachmentSize: message.attachmentSize,
     reactionByMe: message.reactionByMe,
+    replyToEventId: message.replyToEventId,
+    replyToSenderName: message.replyToSenderName,
+    replyToBody: message.replyToBody,
   );
 
   final String body;
@@ -3744,6 +3886,9 @@ final class _ChatMessage {
   final String? attachmentMimeType;
   final int? attachmentSize;
   final String? reactionByMe;
+  final String? replyToEventId;
+  final String? replyToSenderName;
+  final String? replyToBody;
 }
 
 List<_Conversation> _mockConversations() => [

@@ -789,6 +789,8 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   final void Function() _onClose;
   final Map<String, _TimelineSender> _senders = {};
   final Set<String> _senderLoads = {};
+  final Map<String, _TimelineReply> _replies = {};
+  final Set<String> _replyLoads = {};
   final StreamController<List<MatrixMessage>> _updates =
       StreamController.broadcast();
   List<MatrixMessage> _current = const [];
@@ -824,6 +826,13 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     final sender = event.senderFromMemoryOrFallback;
     final loadedSender = _senders[event.senderId];
     if (_senderLoads.add(event.senderId)) unawaited(_loadSender(event));
+    final replyToEventId = undecryptable ? null : event.inReplyToEventId();
+    final reply = replyToEventId == null ? null : _replyPreview(replyToEventId);
+    if (replyToEventId != null &&
+        reply == null &&
+        _replyLoads.add(replyToEventId)) {
+      unawaited(_loadReply(event, replyToEventId));
+    }
     return MatrixMessage(
       eventId: event.eventId,
       senderId: event.senderId,
@@ -862,7 +871,42 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       canRequestKey:
           undecryptable && event.content['can_request_session'] == true,
       reactionByMe: _ownReaction(event),
+      replyToEventId: replyToEventId,
+      replyToSenderName: reply?.senderName,
+      replyToBody: reply?.body,
     );
+  }
+
+  _TimelineReply? _replyPreview(String eventId) {
+    for (final event in _timeline.events) {
+      if (event.eventId == eventId) return _cacheReply(event);
+    }
+    return _replies[eventId];
+  }
+
+  _TimelineReply _cacheReply(matrix.Event event) {
+    final displayEvent = event.getDisplayEvent(_timeline);
+    final sender = displayEvent.senderFromMemoryOrFallback;
+    final reply = _TimelineReply(
+      senderName: sender.calcDisplayname(),
+      body: displayEvent.type == matrix.EventTypes.Encrypted
+          ? 'Encrypted message'
+          : displayEvent.plaintextBody,
+    );
+    _replies[event.eventId] = reply;
+    return reply;
+  }
+
+  Future<void> _loadReply(matrix.Event event, String replyToEventId) async {
+    try {
+      final replyEvent = await event.getReplyEvent(_timeline);
+      if (replyEvent == null || _closed) return;
+      _cacheReply(replyEvent);
+      refresh();
+    } catch (_) {
+      // Keep the relation visible even when its target is outside available
+      // history or cannot be decrypted yet.
+    }
   }
 
   String? _ownReaction(matrix.Event event) {
@@ -1020,4 +1064,11 @@ final class _TimelineSender {
 
   final String name;
   final Uri? avatarUrl;
+}
+
+final class _TimelineReply {
+  const _TimelineReply({required this.senderName, required this.body});
+
+  final String senderName;
+  final String body;
 }

@@ -352,6 +352,9 @@ final class MatrixMessage {
     this.isUndecryptable = false,
     this.canRequestKey = false,
     this.reactionByMe,
+    this.replyToEventId,
+    this.replyToSenderName,
+    this.replyToBody,
   });
 
   final String eventId;
@@ -370,6 +373,9 @@ final class MatrixMessage {
   final bool isUndecryptable;
   final bool canRequestKey;
   final String? reactionByMe;
+  final String? replyToEventId;
+  final String? replyToSenderName;
+  final String? replyToBody;
 }
 
 final class MatrixAttachmentData {
