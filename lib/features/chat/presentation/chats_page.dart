@@ -2313,7 +2313,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
   @override
   void didUpdateWidget(covariant _MessageBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.message.eventId != widget.message.eventId) {
+    if (oldWidget.message.eventId != widget.message.eventId ||
+        oldWidget.message.kind != widget.message.kind ||
+        oldWidget.message.isUndecryptable != widget.message.isUndecryptable) {
       _image = widget.message.kind == MatrixMessageKind.image
           ? widget.onLoadAttachment()
           : null;
