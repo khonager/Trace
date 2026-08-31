@@ -866,6 +866,12 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       attachmentSize: event.hasAttachment
           ? event.infoMap['size'] as int?
           : null,
+      attachmentWidth: event.hasAttachment
+          ? (event.infoMap['w'] as num?)?.toInt()
+          : null,
+      attachmentHeight: event.hasAttachment
+          ? (event.infoMap['h'] as num?)?.toInt()
+          : null,
       isSystem: system,
       isUndecryptable: undecryptable,
       canRequestKey:

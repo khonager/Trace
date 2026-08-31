@@ -4,9 +4,11 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show AsyncCallback;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const double _overviewHeaderHeight = 132;
 const double _conversationRowHeight = 92;
@@ -31,11 +33,12 @@ typedef _OpenProfilePicture =
     void Function({required String name, Uri? mediaUri, String? asset});
 
 class ChatsPage extends StatefulWidget {
-  const ChatsPage({super.key, this.client, this.saveAttachment});
+  const ChatsPage({super.key, this.client, this.saveAttachment, this.openLink});
 
   final MatrixClientPort? client;
   final Future<String?> Function(MatrixAttachmentData attachment)?
   saveAttachment;
+  final Future<bool> Function(Uri uri)? openLink;
 
   @override
   State<ChatsPage> createState() => _ChatsPageState();
@@ -595,6 +598,22 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _openLink(Uri uri) async {
+    if (uri.scheme != 'http' && uri.scheme != 'https') return;
+    try {
+      final openLink = widget.openLink;
+      final opened = openLink == null
+          ? await launchUrl(uri, mode: LaunchMode.externalApplication)
+          : await openLink(uri);
+      if (!opened) throw Exception('No application could open this link.');
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open link: ${_errorText(error)}')),
+      );
+    }
+  }
+
   Future<String?> _askForEdit(String current) async {
     final controller = TextEditingController(text: current);
     final result = await showDialog<String>(
@@ -1103,6 +1122,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onOpenProfilePicture: _showProfilePicture,
               onSaveAttachment: _saveAttachment,
               onOpenImage: _showImage,
+              onOpenLink: _openLink,
               messageKeyFor: _messageKeyFor,
               onOpenReply: _openReply,
               onTogglePinned: widget.client == null
@@ -1236,6 +1256,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onOpenProfilePicture: _showProfilePicture,
                         onSaveAttachment: _saveAttachment,
                         onOpenImage: _showImage,
+                        onOpenLink: _openLink,
                         messageKeyFor: _messageKeyFor,
                         onOpenReply: _openReply,
                         onTogglePinned: widget.client == null
@@ -1734,6 +1755,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onOpenImage,
+    required this.onOpenLink,
     required this.messageKeyFor,
     required this.onOpenReply,
     required this.onTogglePinned,
@@ -1767,6 +1789,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final ValueChanged<_ChatMessage> onOpenImage;
+  final ValueChanged<Uri> onOpenLink;
   final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
@@ -1801,6 +1824,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onOpenProfilePicture: onOpenProfilePicture,
         onSaveAttachment: onSaveAttachment,
         onOpenImage: onOpenImage,
+        onOpenLink: onOpenLink,
         messageKeyFor: messageKeyFor,
         onOpenReply: onOpenReply,
         onTogglePinned: onTogglePinned,
@@ -1919,6 +1943,7 @@ class _ConversationView extends StatelessWidget {
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onOpenImage,
+    required this.onOpenLink,
     required this.messageKeyFor,
     required this.onOpenReply,
     required this.onTogglePinned,
@@ -1951,6 +1976,7 @@ class _ConversationView extends StatelessWidget {
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final ValueChanged<_ChatMessage> onOpenImage;
+  final ValueChanged<Uri> onOpenLink;
   final GlobalKey<_MessageBubbleState> Function(String) messageKeyFor;
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
@@ -2162,6 +2188,7 @@ class _ConversationView extends StatelessWidget {
                         onOpenProfilePicture: onOpenProfilePicture,
                         onSaveAttachment: () => onSaveAttachment(message),
                         onOpenImage: () => onOpenImage(message),
+                        onOpenLink: onOpenLink,
                         onOpenReply: replyToEventId != null
                             ? () => onOpenReply(replyToEventId)
                             : null,
@@ -2373,6 +2400,7 @@ class _MessageBubble extends StatefulWidget {
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onOpenImage,
+    required this.onOpenLink,
     required this.onOpenReply,
   });
 
@@ -2385,6 +2413,7 @@ class _MessageBubble extends StatefulWidget {
   final _OpenProfilePicture onOpenProfilePicture;
   final VoidCallback onSaveAttachment;
   final VoidCallback onOpenImage;
+  final ValueChanged<Uri> onOpenLink;
   final VoidCallback? onOpenReply;
 
   @override
@@ -2521,6 +2550,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           _image = widget.onLoadAttachment();
                         }),
                         onOpen: widget.onOpenImage,
+                        width: widget.message.attachmentWidth,
+                        height: widget.message.attachmentHeight,
                       )
                     else if (widget.message.kind != MatrixMessageKind.text)
                       _FileAttachment(
@@ -2530,17 +2561,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                             : Theme.of(context).colorScheme.onSurface,
                       )
                     else
-                      Text(
-                        widget.message.body,
-                        style: TextStyle(
-                          height: 1.3,
-                          fontStyle: widget.message.isSystem
-                              ? FontStyle.italic
-                              : null,
-                          color: widget.message.sentByMe
-                              ? Theme.of(context).colorScheme.surface
-                              : Theme.of(context).colorScheme.onSurface,
+                      _LinkifiedMessageText(
+                        key: Key(
+                          'message-text-${widget.message.eventId ?? widget.message.senderId}',
                         ),
+                        text: widget.message.body,
+                        sentByMe: widget.message.sentByMe,
+                        italic: widget.message.isSystem,
+                        onOpenLink: widget.onOpenLink,
                       ),
                     if (widget.message.isUndecryptable) ...[
                       const SizedBox(height: 6),
@@ -2631,6 +2659,143 @@ class _MessageBubbleState extends State<_MessageBubble> {
       ),
     );
   }
+}
+
+class _LinkifiedMessageText extends StatefulWidget {
+  const _LinkifiedMessageText({
+    super.key,
+    required this.text,
+    required this.sentByMe,
+    required this.italic,
+    required this.onOpenLink,
+  });
+
+  final String text;
+  final bool sentByMe;
+  final bool italic;
+  final ValueChanged<Uri> onOpenLink;
+
+  @override
+  State<_LinkifiedMessageText> createState() => _LinkifiedMessageTextState();
+}
+
+class _LinkifiedMessageTextState extends State<_LinkifiedMessageText> {
+  static final RegExp _linkPattern = RegExp(
+    r'(?:(?:https?://)|(?:www\.))[^\s<]+',
+    caseSensitive: false,
+  );
+  final List<TapGestureRecognizer> _recognizers = [];
+  late List<_LinkTextPart> _parts;
+
+  @override
+  void initState() {
+    super.initState();
+    _parse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LinkifiedMessageText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text ||
+        oldWidget.onOpenLink != widget.onOpenLink) {
+      _disposeRecognizers();
+      _parse();
+    }
+  }
+
+  void _parse() {
+    final parts = <_LinkTextPart>[];
+    var cursor = 0;
+    for (final match in _linkPattern.allMatches(widget.text)) {
+      if (match.start > cursor) {
+        parts.add(_LinkTextPart(widget.text.substring(cursor, match.start)));
+      }
+      final matchedText = match.group(0)!;
+      var linkLength = matchedText.length;
+      while (linkLength > 0 &&
+          '.,!?;:)]}'.contains(matchedText[linkLength - 1])) {
+        linkLength -= 1;
+      }
+      final linkText = matchedText.substring(0, linkLength);
+      final trailing = matchedText.substring(linkLength);
+      final normalized = linkText.toLowerCase().startsWith('www.')
+          ? 'https://$linkText'
+          : linkText;
+      final uri = Uri.tryParse(normalized);
+      if (uri != null &&
+          uri.host.isNotEmpty &&
+          (uri.scheme == 'http' || uri.scheme == 'https')) {
+        final recognizer = TapGestureRecognizer()
+          ..onTap = () => widget.onOpenLink(uri);
+        _recognizers.add(recognizer);
+        parts.add(_LinkTextPart(linkText, uri: uri, recognizer: recognizer));
+      } else {
+        parts.add(_LinkTextPart(linkText));
+      }
+      if (trailing.isNotEmpty) parts.add(_LinkTextPart(trailing));
+      cursor = match.end;
+    }
+    if (cursor < widget.text.length) {
+      parts.add(_LinkTextPart(widget.text.substring(cursor)));
+    }
+    _parts = parts;
+  }
+
+  void _disposeRecognizers() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = widget.sentByMe
+        ? Theme.of(context).colorScheme.surface
+        : Theme.of(context).colorScheme.onSurface;
+    return Text.rich(
+      TextSpan(
+        style: TextStyle(
+          height: 1.3,
+          fontStyle: widget.italic ? FontStyle.italic : null,
+          color: foreground,
+        ),
+        children: [
+          for (final part in _parts)
+            TextSpan(
+              text: part.text,
+              recognizer: part.recognizer,
+              style: part.uri == null
+                  ? null
+                  : TextStyle(
+                      color: widget.sentByMe
+                          ? foreground
+                          : Theme.of(context).colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                      decorationColor: widget.sentByMe
+                          ? foreground
+                          : Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _LinkTextPart {
+  const _LinkTextPart(this.text, {this.uri, this.recognizer});
+
+  final String text;
+  final Uri? uri;
+  final TapGestureRecognizer? recognizer;
 }
 
 class _ReplyPreview extends StatelessWidget {
@@ -2798,6 +2963,8 @@ class _ImageAttachment extends StatelessWidget {
     required this.foreground,
     required this.onRetry,
     required this.onOpen,
+    required this.width,
+    required this.height,
   });
 
   final Future<MatrixAttachmentData> data;
@@ -2805,6 +2972,8 @@ class _ImageAttachment extends StatelessWidget {
   final Color foreground;
   final VoidCallback onRetry;
   final VoidCallback onOpen;
+  final int? width;
+  final int? height;
 
   @override
   Widget build(BuildContext context) {
@@ -2812,6 +2981,19 @@ class _ImageAttachment extends StatelessWidget {
       future: data,
       builder: (context, snapshot) {
         if (snapshot.hasData) {
+          final rawAspectRatio =
+              width != null && height != null && width! > 0 && height! > 0
+              ? width! / height!
+              : 4 / 3;
+          final aspectRatio = rawAspectRatio.clamp(.2, 5.0);
+          var previewWidth = 272.0;
+          var previewHeight = previewWidth / aspectRatio;
+          if (previewHeight > 300) {
+            previewHeight = 300;
+            previewWidth = previewHeight * aspectRatio;
+          } else if (previewHeight < 96) {
+            previewHeight = 96;
+          }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2823,15 +3005,20 @@ class _ImageAttachment extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.memory(
-                      snapshot.data!.bytes,
-                      key: Key('message-image-$name'),
-                      fit: BoxFit.cover,
-                      width: 272,
-                      height: 180,
-                      errorBuilder: (_, _, _) => _AttachmentError(
-                        foreground: foreground,
-                        onRetry: onRetry,
+                    child: SizedBox(
+                      key: Key('message-image-frame-$name'),
+                      width: previewWidth,
+                      height: previewHeight,
+                      child: Image.memory(
+                        snapshot.data!.bytes,
+                        key: Key('message-image-$name'),
+                        fit: BoxFit.contain,
+                        width: previewWidth,
+                        height: previewHeight,
+                        errorBuilder: (_, _, _) => _AttachmentError(
+                          foreground: foreground,
+                          onRetry: onRetry,
+                        ),
                       ),
                     ),
                   ),
@@ -4015,6 +4202,8 @@ final class _ChatMessage {
     this.attachmentName,
     this.attachmentMimeType,
     this.attachmentSize,
+    this.attachmentWidth,
+    this.attachmentHeight,
     this.reactionByMe,
     this.replyToEventId,
     this.replyToSenderName,
@@ -4037,6 +4226,8 @@ final class _ChatMessage {
     attachmentName: message.attachmentName,
     attachmentMimeType: message.attachmentMimeType,
     attachmentSize: message.attachmentSize,
+    attachmentWidth: message.attachmentWidth,
+    attachmentHeight: message.attachmentHeight,
     reactionByMe: message.reactionByMe,
     replyToEventId: message.replyToEventId,
     replyToSenderName: message.replyToSenderName,
@@ -4058,6 +4249,8 @@ final class _ChatMessage {
   final String? attachmentName;
   final String? attachmentMimeType;
   final int? attachmentSize;
+  final int? attachmentWidth;
+  final int? attachmentHeight;
   final String? reactionByMe;
   final String? replyToEventId;
   final String? replyToSenderName;

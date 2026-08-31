@@ -9,6 +9,10 @@ void main() {
   testWidgets('opens and downloads the original received image', (
     tester,
   ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
     final timeline = _ImageTimeline();
     MatrixAttachmentData? savedAttachment;
     await tester.pumpWidget(
@@ -34,8 +38,13 @@ void main() {
           matching: find.byType(InkWell),
         )
         .first;
-    await tester.ensureVisible(openImage);
-    await tester.tap(openImage);
+    final previewSize = tester.getSize(
+      find.byKey(const Key('message-image-frame-photo.png')),
+    );
+    expect(previewSize.height, greaterThan(180));
+    expect(previewSize.height, lessThanOrEqualTo(300));
+    tester.widget<InkWell>(openImage).onTap!();
+    await tester.pump();
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('received-image-preview')), findsOneWidget);
@@ -138,4 +147,6 @@ final MatrixMessage _imageMessage = MatrixMessage(
   kind: MatrixMessageKind.image,
   attachmentName: 'photo.png',
   attachmentMimeType: 'image/png',
+  attachmentWidth: 1,
+  attachmentHeight: 1,
 );

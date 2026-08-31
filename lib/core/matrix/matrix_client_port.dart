@@ -347,6 +347,8 @@ final class MatrixMessage {
     this.attachmentName,
     this.attachmentMimeType,
     this.attachmentSize,
+    this.attachmentWidth,
+    this.attachmentHeight,
     this.senderAvatarUrl,
     this.isSystem = false,
     this.isUndecryptable = false,
@@ -368,6 +370,8 @@ final class MatrixMessage {
   final String? attachmentName;
   final String? attachmentMimeType;
   final int? attachmentSize;
+  final int? attachmentWidth;
+  final int? attachmentHeight;
   final Uri? senderAvatarUrl;
   final bool isSystem;
   final bool isUndecryptable;
