@@ -40,6 +40,12 @@ flutter run -d android
 flutter run -d chrome
 ```
 
+Optional open-web GIF and sticker search is configured at build time. Users do
+not need provider keys; distributors configure the shared Trace relay and
+GIPHY app integration. See
+[`docs/protocols/MEDIA_SEARCH.md`](docs/protocols/MEDIA_SEARCH.md) and the
+[`relay README`](tool/media_search_relay/README.md).
+
 ### Android with Obtainium
 
 [![Add Trace to Obtainium](https://img.shields.io/badge/Add%20to-Obtainium-4A90E2?logo=android&logoColor=white)](https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fadd%2Fhttps%3A%2F%2Fgithub.com%2Fkhonager%2FTrace)

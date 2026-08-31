@@ -102,8 +102,10 @@ items as implemented.
 - [ ] `MATRIX` Sticker sending and sticker packs
 - [ ] `MATRIX` Animated stickers
 - [ ] `MATRIX+TRACE` Sticker pack creation, import, export, and moderation
-- [ ] `MATRIX` GIF sending from files or URLs
-- [ ] `EXTERNAL` Integrated GIF search
+- [x] `MATRIX` GIF sending from files or search results
+- [x] `EXTERNAL` Integrated open-web and curated GIF search
+- [x] `EXTERNAL` Integrated sticker search
+- [x] `MATRIX+ANDROID` Send rich GIF/image content inserted by a keyboard
 - [ ] `TRACE` Favourite and recent GIFs
 - [ ] `EXTERNAL` GIF content-safety controls and provider selection
 - [ ] `MATRIX+TRACE` Memes, image captions, and simple markup tools

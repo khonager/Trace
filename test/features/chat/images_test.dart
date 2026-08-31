@@ -32,6 +32,12 @@ void main() {
     await tester.tap(find.byKey(const Key('conversation-row-0')));
     await tester.pumpAndSettle();
 
+    final mediaSurface = tester.widget<Container>(
+      find.byKey(const Key('message-surface-image-event')),
+    );
+    expect(mediaSurface.decoration, isNull);
+    expect(mediaSurface.padding, EdgeInsets.zero);
+
     final openImage = find
         .ancestor(
           of: find.byKey(const Key('message-image-photo.png')),
@@ -57,12 +63,34 @@ void main() {
     expect(savedAttachment?.mimeType, 'image/png');
     expect(timeline.thumbnailRequests, [true, false]);
   });
+
+  testWidgets('pending images fall back to locally cached original bytes', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final timeline = _PendingImageTimeline();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
+        home: Scaffold(body: ChatsPage(client: _ImageClient(timeline))),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('conversation-row-0')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-image-sending.gif')), findsOneWidget);
+    expect(find.text('Load image again'), findsNothing);
+    expect(timeline.thumbnailRequests, [true, false]);
+  });
 }
 
 final class _ImageClient implements MatrixClientPort {
   _ImageClient(this.timeline);
 
-  final _ImageTimeline timeline;
+  final MatrixTimelinePort timeline;
 
   @override
   MatrixClientSnapshot get current => MatrixClientSnapshot(
@@ -97,6 +125,39 @@ final class _ImageClient implements MatrixClientPort {
 
   @override
   Future<void> setTyping(String roomId, bool typing) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _PendingImageTimeline implements MatrixTimelinePort {
+  final List<bool> thumbnailRequests = [];
+
+  @override
+  List<MatrixMessage> get current => [_pendingImageMessage];
+
+  @override
+  Stream<List<MatrixMessage>> get updates => const Stream.empty();
+
+  @override
+  bool get canLoadOlder => false;
+
+  @override
+  Future<MatrixAttachmentData> downloadAttachment(
+    String eventId, {
+    bool thumbnail = false,
+  }) async {
+    thumbnailRequests.add(thumbnail);
+    if (thumbnail) throw StateError('Thumbnail is still being generated.');
+    return MatrixAttachmentData(
+      bytes: base64Decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='),
+      name: 'sending.gif',
+      mimeType: 'image/gif',
+    );
+  }
+
+  @override
+  Future<void> close() async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -147,6 +208,21 @@ final MatrixMessage _imageMessage = MatrixMessage(
   kind: MatrixMessageKind.image,
   attachmentName: 'photo.png',
   attachmentMimeType: 'image/png',
+  attachmentWidth: 1,
+  attachmentHeight: 1,
+);
+
+final MatrixMessage _pendingImageMessage = MatrixMessage(
+  eventId: 'pending-image-event',
+  senderId: '@me:example.org',
+  senderName: 'Me',
+  body: 'sending.gif',
+  timestamp: DateTime.utc(2026, 8, 31, 12),
+  sentByMe: true,
+  delivery: MatrixMessageDelivery.sending,
+  kind: MatrixMessageKind.image,
+  attachmentName: 'sending.gif',
+  attachmentMimeType: 'image/gif',
   attachmentWidth: 1,
   attachmentHeight: 1,
 );

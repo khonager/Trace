@@ -28,6 +28,8 @@ cheap.
 - `lib/features/call_audio`: exact-file approval and playback selection.
 - `lib/features/ai`: local/cloud provider boundary and disclosure gate.
 - `lib/features/file_transfer`: route selection between Matrix, P2P, and relay.
+- `lib/features/chat/application`: attachment picking, composer preferences,
+  and provider-neutral media search.
 - `lib/infrastructure/matrix`: Matrix Dart SDK and vodozemac adapters.
 - `lib/app`: disposable composition and presentation shell.
 
@@ -39,6 +41,9 @@ cheap.
 - Custom caller audio is encrypted at rest and addressed by a cryptographic
   content hash.
 - Relay services receive ciphertext and expiry metadata, never file keys.
+- Media-search providers receive search terms. Brave credentials stay on the
+  Trace search relay; GIPHY's provider-required direct-client key is an app
+  identifier rather than a stored user credential.
 
 ## Platform adapters
 

@@ -18,6 +18,8 @@ This document is groundwork, not a completed security review.
 - Cloud AI providers receive plaintext explicitly selected by the user.
 - A local AI process is outside the Flutter process and may have its own logs.
 - TURN and relay servers observe connection metadata and ciphertext.
+- Media-search providers or the Trace search relay observe search terms and
+  network metadata. Selected public media becomes a Matrix upload.
 
 ## Required controls
 
@@ -35,6 +37,8 @@ This document is groundwork, not a completed security review.
   content hash before exposing the file.
 - Respect block lists before live typing, calls, AI room participation, or file
   negotiation.
+- Keep Brave search credentials on the relay, sign relay media URLs, reject
+  private-network targets and redirects, validate MIME types, and cap downloads.
 
 ## Explicit non-guarantees
 

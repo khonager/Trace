@@ -6,8 +6,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show AsyncCallback;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show KeyboardInsertedContent, rootBundle;
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/chat/application/attachment_picker.dart';
+import 'package:trace/features/chat/application/composer_actions.dart';
+import 'package:trace/features/chat/application/configured_media_search_client.dart';
+import 'package:trace/features/chat/application/media_search.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const double _overviewHeaderHeight = 132;
@@ -33,12 +37,23 @@ typedef _OpenProfilePicture =
     void Function({required String name, Uri? mediaUri, String? asset});
 
 class ChatsPage extends StatefulWidget {
-  const ChatsPage({super.key, this.client, this.saveAttachment, this.openLink});
+  const ChatsPage({
+    super.key,
+    this.client,
+    this.saveAttachment,
+    this.openLink,
+    this.pickAttachment,
+    this.mediaSearch,
+    this.composerActionPinStore,
+  });
 
   final MatrixClientPort? client;
   final Future<String?> Function(MatrixAttachmentData attachment)?
   saveAttachment;
   final Future<bool> Function(Uri uri)? openLink;
+  final Future<ChatAttachment?> Function()? pickAttachment;
+  final MediaSearchPort? mediaSearch;
+  final ComposerActionPinStore? composerActionPinStore;
 
   @override
   State<ChatsPage> createState() => _ChatsPageState();
@@ -70,12 +85,20 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _desktopListCollapsed = false;
   bool _backgroundsPrecached = false;
   bool _attachmentBusy = false;
+  late final MediaSearchPort _mediaSearch;
+  late final ComposerActionPinStore _composerActionPinStore;
+  List<ComposerAction> _pinnedComposerActions = const [];
   double _transitionTravel = 1;
   int? _manualBackgroundFromIndex;
 
   @override
   void initState() {
     super.initState();
+    _mediaSearch = widget.mediaSearch ?? ConfiguredMediaSearchClient();
+    _composerActionPinStore =
+        widget.composerActionPinStore ??
+        SharedPreferencesComposerActionPinStore();
+    unawaited(_loadPinnedComposerActions());
     _allRooms = widget.client?.current.rooms ?? const [];
     _spaceOrder = widget.client?.current.spaceOrder ?? const [];
     _conversations = widget.client == null
@@ -101,6 +124,38 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
+  }
+
+  Future<void> _loadPinnedComposerActions() async {
+    try {
+      final actions = await _composerActionPinStore.load();
+      if (mounted) setState(() => _pinnedComposerActions = actions);
+    } catch (_) {
+      // Pin persistence is a convenience; the composer remains usable if the
+      // platform preference store is temporarily unavailable.
+    }
+  }
+
+  void _toggleComposerActionPinned(ComposerAction action) {
+    final updated = _pinnedComposerActions.toList(growable: true);
+    if (updated.remove(action)) {
+      // Removed above.
+    } else {
+      updated.add(action);
+    }
+    setState(() => _pinnedComposerActions = List.unmodifiable(updated));
+    unawaited(_composerActionPinStore.save(updated).catchError((_) {}));
+  }
+
+  void _runComposerAction(ComposerAction action) {
+    switch (action) {
+      case ComposerAction.attachFile:
+        unawaited(_sendAttachment());
+      case ComposerAction.gifSearch:
+        unawaited(_showMediaSearch(MediaSearchKind.gif));
+      case ComposerAction.stickerSearch:
+        unawaited(_showMediaSearch(MediaSearchKind.sticker));
+    }
   }
 
   @override
@@ -296,6 +351,29 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
+            if (message.timestamp != null) ...[
+              Padding(
+                key: const Key('message-details-timestamp'),
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.schedule_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 14),
+                    Text(
+                      '${_formatMessageDate(message.timestamp!)} · ${_formatMessageTime(message.timestamp!)}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+            ],
             if (message.delivery == MatrixMessageDelivery.failed)
               ListTile(
                 leading: const Icon(Icons.refresh),
@@ -475,7 +553,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   Future<MatrixAttachmentData> _loadAttachment(
     _ChatMessage message, {
     bool thumbnail = false,
-  }) {
+  }) async {
     final eventId = message.eventId;
     if (eventId == null || _conversations.isEmpty) {
       throw StateError('Attachment is not available.');
@@ -483,7 +561,15 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final roomId = _conversations[_activeConversation].id;
     final timeline = _timelines[roomId];
     if (timeline == null) throw StateError('Timeline is not loaded.');
-    return timeline.downloadAttachment(eventId, thumbnail: thumbnail);
+    if (!thumbnail) return timeline.downloadAttachment(eventId);
+    try {
+      return await timeline.downloadAttachment(eventId, thumbnail: true);
+    } catch (_) {
+      // Pending Matrix image events are inserted before the SDK has generated
+      // their thumbnail. The original bytes are already in the local send
+      // cache, so use them immediately instead of showing a retry error.
+      return timeline.downloadAttachment(eventId);
+    }
   }
 
   Future<Uint8List> _loadMediaThumbnail(Uri uri) {
@@ -676,12 +762,16 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   Future<void> _sendAttachment() async {
     final client = widget.client;
     if (client == null || _attachmentBusy || _conversations.isEmpty) return;
-    final file = await FilePicker.pickFile(dialogTitle: 'Add an attachment');
-    if (file == null || !mounted) return;
-    final roomId = _conversations[_activeConversation].id;
-    final fileName = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
     setState(() => _attachmentBusy = true);
+    var fileSelected = false;
     try {
+      final file = await (widget.pickAttachment ?? pickChatAttachment)();
+      if (file == null || !mounted) return;
+      fileSelected = true;
+      final roomId = _conversations[_activeConversation].id;
+      final fileName = file.name.trim().isEmpty
+          ? 'attachment'
+          : file.name.trim();
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) throw Exception('The selected file is empty.');
       await client.sendFile(
@@ -697,12 +787,112 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('File was not sent: ${_errorText(error)}')),
+          SnackBar(
+            content: Text(
+              '${fileSelected ? 'File was not sent' : 'File picker could not open'}: '
+              '${_errorText(error)}',
+            ),
+          ),
         );
       }
     } finally {
       if (mounted) setState(() => _attachmentBusy = false);
     }
+  }
+
+  Future<void> _sendKeyboardContent(KeyboardInsertedContent content) async {
+    final client = widget.client;
+    if (client == null || _attachmentBusy || _conversations.isEmpty) return;
+    setState(() => _attachmentBusy = true);
+    try {
+      final bytes = content.data;
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception('The keyboard did not provide readable media bytes.');
+      }
+      final mimeType = content.mimeType.toLowerCase();
+      final extension = switch (mimeType) {
+        'image/gif' => 'gif',
+        'image/png' => 'png',
+        'image/jpeg' => 'jpg',
+        'image/webp' => 'webp',
+        _ => throw Exception('Unsupported keyboard media type: $mimeType.'),
+      };
+      final roomId = _conversations[_activeConversation].id;
+      await client.sendFile(
+        roomId: roomId,
+        name: 'keyboard-${DateTime.now().millisecondsSinceEpoch}.$extension',
+        bytes: bytes,
+        mimeType: mimeType,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Keyboard media sent.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Keyboard media was not sent: ${_errorText(error)}'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
+  }
+
+  Future<void> _showMediaSearch(MediaSearchKind kind) async {
+    final client = widget.client;
+    if (client == null || _attachmentBusy || _conversations.isEmpty) return;
+    final result = await showModalBottomSheet<MediaSearchResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) =>
+          _MediaSearchSheet(kind: kind, mediaSearch: _mediaSearch),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _attachmentBusy = true);
+    try {
+      final downloaded = await _mediaSearch.download(result);
+      if (!mounted) return;
+      final roomId = _conversations[_activeConversation].id;
+      await client.sendFile(
+        roomId: roomId,
+        name: _mediaFileName(result, downloaded.mimeType),
+        bytes: downloaded.bytes,
+        mimeType: downloaded.mimeType,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${kind == MediaSearchKind.gif ? 'GIF' : 'Sticker'} sent.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Media was not sent: ${_errorText(error)}')),
+      );
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
+  }
+
+  String _mediaFileName(MediaSearchResult result, String mimeType) {
+    final safeTitle = result.title
+        .replaceAll(RegExp(r'[^a-zA-Z0-9 _-]'), '')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), '-');
+    final extension = switch (mimeType) {
+      'image/gif' => 'gif',
+      'image/png' => 'png',
+      'image/webp' => 'webp',
+      'video/mp4' => 'mp4',
+      _ => 'bin',
+    };
+    return '${safeTitle.isEmpty ? result.id : safeTitle}.$extension';
   }
 
   void _applyRooms(List<MatrixRoom> rooms) {
@@ -1112,7 +1302,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               activeIndex: _activeConversation,
               composerController: _composerController,
               onSend: _sendMessage,
-              onAttachment: _sendAttachment,
+              onComposerAction: _runComposerAction,
+              pinnedComposerActions: _pinnedComposerActions,
+              onToggleComposerActionPinned: _toggleComposerActionPinned,
+              onKeyboardContent: _sendKeyboardContent,
               onComposerChanged: _composerChanged,
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
@@ -1246,7 +1439,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         activeIndex: _activeConversation,
                         composerController: _composerController,
                         onSend: _sendMessage,
-                        onAttachment: _sendAttachment,
+                        onComposerAction: _runComposerAction,
+                        pinnedComposerActions: _pinnedComposerActions,
+                        onToggleComposerActionPinned:
+                            _toggleComposerActionPinned,
+                        onKeyboardContent: _sendKeyboardContent,
                         onComposerChanged: _composerChanged,
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
@@ -1745,7 +1942,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.activeIndex,
     required this.composerController,
     required this.onSend,
-    required this.onAttachment,
+    required this.onComposerAction,
+    required this.pinnedComposerActions,
+    required this.onToggleComposerActionPinned,
+    required this.onKeyboardContent,
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
@@ -1778,7 +1978,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final int activeIndex;
   final TextEditingController composerController;
   final VoidCallback onSend;
-  final VoidCallback onAttachment;
+  final ValueChanged<ComposerAction> onComposerAction;
+  final List<ComposerAction> pinnedComposerActions;
+  final ValueChanged<ComposerAction> onToggleComposerActionPinned;
+  final ValueChanged<KeyboardInsertedContent> onKeyboardContent;
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
@@ -1814,7 +2017,10 @@ class _FocusedChatWorkspace extends StatelessWidget {
         conversation: conversations[activeIndex],
         composerController: composerController,
         onSend: onSend,
-        onAttachment: onAttachment,
+        onComposerAction: onComposerAction,
+        pinnedComposerActions: pinnedComposerActions,
+        onToggleComposerActionPinned: onToggleComposerActionPinned,
+        onKeyboardContent: onKeyboardContent,
         onComposerChanged: onComposerChanged,
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
@@ -1933,7 +2139,10 @@ class _ConversationView extends StatelessWidget {
     required this.conversation,
     required this.composerController,
     required this.onSend,
-    required this.onAttachment,
+    required this.onComposerAction,
+    required this.pinnedComposerActions,
+    required this.onToggleComposerActionPinned,
+    required this.onKeyboardContent,
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
@@ -1965,7 +2174,10 @@ class _ConversationView extends StatelessWidget {
   final _Conversation conversation;
   final TextEditingController composerController;
   final VoidCallback onSend;
-  final VoidCallback onAttachment;
+  final ValueChanged<ComposerAction> onComposerAction;
+  final List<ComposerAction> pinnedComposerActions;
+  final ValueChanged<ComposerAction> onToggleComposerActionPinned;
+  final ValueChanged<KeyboardInsertedContent> onKeyboardContent;
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
@@ -2174,24 +2386,43 @@ class _ConversationView extends StatelessWidget {
                           conversation.messages.length - reverseIndex - 1;
                       final message = conversation.messages[index];
                       final replyToEventId = message.replyToEventId;
-                      return _MessageBubble(
-                        key: message.eventId == null
-                            ? null
-                            : messageKeyFor(message.eventId!),
-                        message: message,
-                        showSenderIdentity: !conversation.isDirect,
-                        onLongPress: () => onMessageLongPress(message),
-                        onRequestKey: () => onRequestMessageKey(message),
-                        onLoadAttachment: () =>
-                            onLoadAttachment(message, thumbnail: true),
-                        onLoadMediaThumbnail: onLoadMediaThumbnail,
-                        onOpenProfilePicture: onOpenProfilePicture,
-                        onSaveAttachment: () => onSaveAttachment(message),
-                        onOpenImage: () => onOpenImage(message),
-                        onOpenLink: onOpenLink,
-                        onOpenReply: replyToEventId != null
-                            ? () => onOpenReply(replyToEventId)
-                            : null,
+                      final previousTimestamp = index == 0
+                          ? null
+                          : conversation.messages[index - 1].timestamp;
+                      final showDate =
+                          message.timestamp != null &&
+                          (previousTimestamp == null ||
+                              !_isSameLocalDay(
+                                previousTimestamp,
+                                message.timestamp!,
+                              ));
+                      return Column(
+                        children: [
+                          if (showDate)
+                            _MessageDateSeparator(
+                              timestamp: message.timestamp!,
+                            ),
+                          _MessageBubble(
+                            key: message.eventId == null
+                                ? null
+                                : messageKeyFor(message.eventId!),
+                            message: message,
+                            showTimestamp: _isToday(message.timestamp),
+                            showSenderIdentity: !conversation.isDirect,
+                            onLongPress: () => onMessageLongPress(message),
+                            onRequestKey: () => onRequestMessageKey(message),
+                            onLoadAttachment: () =>
+                                onLoadAttachment(message, thumbnail: true),
+                            onLoadMediaThumbnail: onLoadMediaThumbnail,
+                            onOpenProfilePicture: onOpenProfilePicture,
+                            onSaveAttachment: () => onSaveAttachment(message),
+                            onOpenImage: () => onOpenImage(message),
+                            onOpenLink: onOpenLink,
+                            onOpenReply: replyToEventId != null
+                                ? () => onOpenReply(replyToEventId)
+                                : null,
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -2203,7 +2434,10 @@ class _ConversationView extends StatelessWidget {
             controller: composerController,
             conversationId: conversation.id,
             onSend: onSend,
-            onAttachment: onAttachment,
+            onComposerAction: onComposerAction,
+            pinnedActions: pinnedComposerActions,
+            onTogglePinned: onToggleComposerActionPinned,
+            onKeyboardContent: onKeyboardContent,
             onChanged: onComposerChanged,
             replyLabel: replyLabel,
             attachmentBusy: attachmentBusy,
@@ -2388,10 +2622,47 @@ class _ConversationBackground extends StatelessWidget {
   }
 }
 
+class _MessageDateSeparator extends StatelessWidget {
+  const _MessageDateSeparator({required this.timestamp});
+
+  final DateTime timestamp;
+
+  @override
+  Widget build(BuildContext context) {
+    final local = timestamp.toLocal();
+    final dividerColor = Theme.of(
+      context,
+    ).colorScheme.outlineVariant.withValues(alpha: 0.7);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 14),
+      child: Row(
+        children: [
+          Expanded(child: Divider(color: dividerColor)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              _formatMessageDate(timestamp),
+              key: Key(
+                'message-date-${local.year}-${local.month}-${local.day}',
+              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: dividerColor)),
+        ],
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     super.key,
     required this.message,
+    required this.showTimestamp,
     required this.showSenderIdentity,
     required this.onLongPress,
     required this.onRequestKey,
@@ -2405,6 +2676,7 @@ class _MessageBubble extends StatefulWidget {
   });
 
   final _ChatMessage message;
+  final bool showTimestamp;
   final bool showSenderIdentity;
   final VoidCallback onLongPress;
   final VoidCallback onRequestKey;
@@ -2449,6 +2721,17 @@ class _MessageBubbleState extends State<_MessageBubble> {
         widget.showSenderIdentity &&
         !widget.message.sentByMe &&
         !widget.message.isSystem;
+    final standaloneMedia = widget.message.kind == MatrixMessageKind.image;
+    final useSentBubbleColors = widget.message.sentByMe && !standaloneMedia;
+    final deliveryLabel = switch (widget.message.delivery) {
+      MatrixMessageDelivery.sending => 'Sending…',
+      MatrixMessageDelivery.failed => 'Failed · tap to retry',
+      MatrixMessageDelivery.sent => 'Sent',
+      MatrixMessageDelivery.synced
+          when widget.showTimestamp && widget.message.timestamp != null =>
+        _formatMessageTime(widget.message.timestamp!),
+      _ => null,
+    };
     return Align(
       alignment: widget.message.sentByMe
           ? Alignment.centerRight
@@ -2474,36 +2757,40 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   : widget.onSaveAttachment,
               onLongPress: widget.onLongPress,
               child: Container(
+                key: Key(
+                  'message-surface-${widget.message.eventId ?? widget.message.senderId}',
+                ),
                 constraints: const BoxConstraints(maxWidth: 300),
                 margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: widget.message.sentByMe
-                      ? Theme.of(context).colorScheme.onSurface
-                      : Theme.of(context).colorScheme.surfaceContainer,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: widget.message.sentByMe
-                        ? Theme.of(
-                            context,
-                          ).colorScheme.surface.withValues(alpha: 0.32)
-                        : Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.65),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withValues(alpha: 0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
+                padding: standaloneMedia
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: standaloneMedia
+                    ? null
+                    : BoxDecoration(
+                        color: widget.message.sentByMe
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Theme.of(context).colorScheme.surfaceContainer,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: widget.message.sentByMe
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.surface.withValues(alpha: 0.32)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.outline.withValues(alpha: 0.65),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
                 child: Column(
                   crossAxisAlignment: widget.message.sentByMe
                       ? CrossAxisAlignment.end
@@ -2532,7 +2819,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         body:
                             widget.message.replyToBody ??
                             'Original message unavailable',
-                        sentByMe: widget.message.sentByMe,
+                        sentByMe: useSentBubbleColors,
                         onTap: widget.onOpenReply,
                       ),
                       const SizedBox(height: 7),
@@ -2543,9 +2830,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         name:
                             widget.message.attachmentName ??
                             widget.message.body,
-                        foreground: widget.message.sentByMe
-                            ? Theme.of(context).colorScheme.surface
-                            : Theme.of(context).colorScheme.onSurface,
+                        foreground: Theme.of(context).colorScheme.onSurface,
                         onRetry: () => setState(() {
                           _image = widget.onLoadAttachment();
                         }),
@@ -2581,7 +2866,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           icon: const Icon(Icons.key_outlined, size: 16),
                           label: const Text('Request key'),
                           style: TextButton.styleFrom(
-                            foregroundColor: widget.message.sentByMe
+                            foregroundColor: useSentBubbleColors
                                 ? Theme.of(context).colorScheme.surface
                                 : Theme.of(context).colorScheme.onSurface,
                             visualDensity: VisualDensity.compact,
@@ -2593,7 +2878,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           'Restore encryption recovery to access its room key.',
                           style: TextStyle(
                             fontSize: 11,
-                            color: widget.message.sentByMe
+                            color: useSentBubbleColors
                                 ? Theme.of(
                                     context,
                                   ).colorScheme.surface.withValues(alpha: 0.72)
@@ -2613,7 +2898,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           vertical: 3,
                         ),
                         decoration: BoxDecoration(
-                          color: widget.message.sentByMe
+                          color: useSentBubbleColors
                               ? Theme.of(
                                   context,
                                 ).colorScheme.surface.withValues(alpha: 0.16)
@@ -2626,21 +2911,16 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         ),
                       ),
                     ],
-                    if (widget.message.delivery != null) ...[
+                    if (deliveryLabel != null) ...[
                       const SizedBox(height: 3),
                       Text(
-                        switch (widget.message.delivery!) {
-                          MatrixMessageDelivery.sending => 'Sending…',
-                          MatrixMessageDelivery.failed =>
-                            'Failed · tap to retry',
-                          MatrixMessageDelivery.sent => 'Sent',
-                          MatrixMessageDelivery.synced => _formatMessageTime(
-                            widget.message.timestamp!,
-                          ),
-                        },
+                        deliveryLabel,
+                        key: Key(
+                          'message-time-${widget.message.eventId ?? widget.message.senderId}',
+                        ),
                         style: TextStyle(
                           fontSize: 10,
-                          color: widget.message.sentByMe
+                          color: useSentBubbleColors
                               ? Theme.of(
                                   context,
                                 ).colorScheme.surface.withValues(alpha: 0.72)
@@ -2994,39 +3274,32 @@ class _ImageAttachment extends StatelessWidget {
           } else if (previewHeight < 96) {
             previewHeight = 96;
           }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Semantics(
-                button: true,
-                label: 'Open $name',
-                child: InkWell(
-                  onTap: onOpen,
-                  borderRadius: BorderRadius.circular(10),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      key: Key('message-image-frame-$name'),
-                      width: previewWidth,
-                      height: previewHeight,
-                      child: Image.memory(
-                        snapshot.data!.bytes,
-                        key: Key('message-image-$name'),
-                        fit: BoxFit.contain,
-                        width: previewWidth,
-                        height: previewHeight,
-                        errorBuilder: (_, _, _) => _AttachmentError(
-                          foreground: foreground,
-                          onRetry: onRetry,
-                        ),
-                      ),
+          return Semantics(
+            button: true,
+            label: 'Open $name',
+            child: InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(10),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  key: Key('message-image-frame-$name'),
+                  width: previewWidth,
+                  height: previewHeight,
+                  child: Image.memory(
+                    snapshot.data!.bytes,
+                    key: Key('message-image-$name'),
+                    fit: BoxFit.contain,
+                    width: previewWidth,
+                    height: previewHeight,
+                    errorBuilder: (_, _, _) => _AttachmentError(
+                      foreground: foreground,
+                      onRetry: onRetry,
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ],
+            ),
           );
         }
         if (snapshot.hasError) {
@@ -3108,7 +3381,10 @@ class _MessageComposer extends StatelessWidget {
     required this.controller,
     required this.conversationId,
     required this.onSend,
-    required this.onAttachment,
+    required this.onComposerAction,
+    required this.pinnedActions,
+    required this.onTogglePinned,
+    required this.onKeyboardContent,
     required this.onChanged,
     required this.replyLabel,
     required this.attachmentBusy,
@@ -3118,7 +3394,10 @@ class _MessageComposer extends StatelessWidget {
   final TextEditingController controller;
   final String conversationId;
   final VoidCallback onSend;
-  final VoidCallback onAttachment;
+  final ValueChanged<ComposerAction> onComposerAction;
+  final List<ComposerAction> pinnedActions;
+  final ValueChanged<ComposerAction> onTogglePinned;
+  final ValueChanged<KeyboardInsertedContent> onKeyboardContent;
   final ValueChanged<String> onChanged;
   final String? replyLabel;
   final bool attachmentBusy;
@@ -3146,11 +3425,75 @@ class _MessageComposer extends StatelessWidget {
                   ),
                 ],
               ),
+            if (pinnedActions.isNotEmpty)
+              SizedBox(
+                key: const Key('pinned-composer-actions'),
+                height: 42,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(bottom: 6),
+                  itemCount: pinnedActions.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 6),
+                  itemBuilder: (context, index) {
+                    final action = pinnedActions[index];
+                    return Tooltip(
+                      message:
+                          '${_composerActionLabel(action)} · Hold to unpin',
+                      child: GestureDetector(
+                        onLongPress: () => onTogglePinned(action),
+                        child: OutlinedButton.icon(
+                          key: Key('pinned-composer-action-${action.name}'),
+                          onPressed: attachmentBusy
+                              ? null
+                              : () => onComposerAction(action),
+                          icon: Icon(_composerActionIcon(action), size: 17),
+                          label: Text(_composerActionShortLabel(action)),
+                          style: OutlinedButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             Row(
               children: [
-                IconButton(
-                  tooltip: 'Add attachment',
-                  onPressed: attachmentBusy ? null : onAttachment,
+                PopupMenuButton<ComposerAction>(
+                  key: const Key('composer-action-menu'),
+                  tooltip: 'Add',
+                  enabled: !attachmentBusy,
+                  onSelected: onComposerAction,
+                  itemBuilder: (context) => ComposerAction.values
+                      .map(
+                        (action) => PopupMenuItem<ComposerAction>(
+                          key: Key('composer-action-menu-${action.name}'),
+                          value: action,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onLongPress: () {
+                              Navigator.pop(context);
+                              onTogglePinned(action);
+                            },
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Row(
+                                children: [
+                                  Icon(_composerActionIcon(action), size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(_composerActionLabel(action)),
+                                  ),
+                                  if (pinnedActions.contains(action))
+                                    const Icon(Icons.push_pin, size: 16),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
                   icon: attachmentBusy
                       ? const SizedBox.square(
                           dimension: 20,
@@ -3163,6 +3506,16 @@ class _MessageComposer extends StatelessWidget {
                     key: Key('message-composer-$conversationId'),
                     controller: controller,
                     onChanged: onChanged,
+                    contentInsertionConfiguration:
+                        ContentInsertionConfiguration(
+                          allowedMimeTypes: const [
+                            'image/gif',
+                            'image/png',
+                            'image/jpeg',
+                            'image/webp',
+                          ],
+                          onContentInserted: onKeyboardContent,
+                        ),
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => onSend(),
                     decoration: const InputDecoration(
@@ -3187,6 +3540,264 @@ class _MessageComposer extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+String _composerActionLabel(ComposerAction action) => switch (action) {
+  ComposerAction.attachFile => 'Attach file',
+  ComposerAction.gifSearch => 'Search GIFs',
+  ComposerAction.stickerSearch => 'Search stickers',
+};
+
+String _composerActionShortLabel(ComposerAction action) => switch (action) {
+  ComposerAction.attachFile => 'File',
+  ComposerAction.gifSearch => 'GIF',
+  ComposerAction.stickerSearch => 'Sticker',
+};
+
+IconData _composerActionIcon(ComposerAction action) => switch (action) {
+  ComposerAction.attachFile => Icons.attach_file,
+  ComposerAction.gifSearch => Icons.gif_box_outlined,
+  ComposerAction.stickerSearch => Icons.emoji_emotions_outlined,
+};
+
+class _MediaSearchSheet extends StatefulWidget {
+  const _MediaSearchSheet({required this.kind, required this.mediaSearch});
+
+  final MediaSearchKind kind;
+  final MediaSearchPort mediaSearch;
+
+  @override
+  State<_MediaSearchSheet> createState() => _MediaSearchSheetState();
+}
+
+class _MediaSearchSheetState extends State<_MediaSearchSheet> {
+  final TextEditingController _queryController = TextEditingController();
+  List<MediaSearchResult> _results = const [];
+  String? _error;
+  bool _searching = false;
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    final query = _queryController.text.trim();
+    if (query.isEmpty || _searching) return;
+    setState(() {
+      _searching = true;
+      _error = null;
+    });
+    try {
+      final results = await widget.mediaSearch.search(
+        query: query,
+        kind: widget.kind,
+        safety: MediaSearchSafety.open,
+      );
+      if (mounted) setState(() => _results = results);
+    } catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.kind == MediaSearchKind.gif ? 'GIFs' : 'stickers';
+    return FractionallySizedBox(
+      heightFactor: 0.82,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Search $label',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              key: Key('media-search-${widget.kind.name}'),
+              controller: _queryController,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _search(),
+              decoration: InputDecoration(
+                hintText: 'Search the web and GIF providers',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searching
+                    ? const Padding(
+                        padding: EdgeInsets.all(13),
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : IconButton(
+                        key: const Key('media-search-submit'),
+                        tooltip: 'Search',
+                        onPressed: _search,
+                        icon: const Icon(Icons.arrow_forward),
+                      ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(child: _buildBody(label)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody(String label) {
+    if (!widget.mediaSearch.isConfigured) {
+      return const _MediaSearchMessage(
+        icon: Icons.settings_outlined,
+        title: 'Media search is not configured',
+        body:
+            'Build Trace with a media-search relay URL, a GIPHY app key, or '
+            'both. Users do not need their own provider keys.',
+      );
+    }
+    if (_error case final error?) {
+      return _MediaSearchMessage(
+        icon: Icons.error_outline,
+        title: 'Search failed',
+        body: error,
+        action: TextButton(onPressed: _search, child: const Text('Try again')),
+      );
+    }
+    if (_results.isEmpty) {
+      return _MediaSearchMessage(
+        icon: widget.kind == MediaSearchKind.gif
+            ? Icons.gif_box_outlined
+            : Icons.emoji_emotions_outlined,
+        title: _queryController.text.trim().isEmpty
+            ? 'Find $label'
+            : 'No results',
+        body: _queryController.text.trim().isEmpty
+            ? 'Results combine open-web search with curated media providers.'
+            : 'Try a different search.',
+      );
+    }
+    return GridView.builder(
+      key: const Key('media-search-results'),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 220,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+      ),
+      itemCount: _results.length,
+      itemBuilder: (context, index) {
+        final result = _results[index];
+        return Semantics(
+          button: true,
+          label: '${result.title}, from ${result.source}',
+          child: InkWell(
+            key: Key('media-search-result-${result.id}'),
+            onTap: () => Navigator.pop(context, result),
+            borderRadius: BorderRadius.circular(12),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(
+                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                    child: Image.network(
+                      result.previewUri.toString(),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          const Icon(Icons.broken_image_outlined, size: 36),
+                    ),
+                  ),
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.7),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          result.source,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MediaSearchMessage extends StatelessWidget {
+  const _MediaSearchMessage({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 42),
+              const SizedBox(height: 12),
+              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(body, textAlign: TextAlign.center),
+              if (action case final action?) ...[
+                const SizedBox(height: 8),
+                action,
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -4086,6 +4697,49 @@ String _formatRoomTime(DateTime timestamp) {
 String _formatMessageTime(DateTime timestamp) {
   final local = timestamp.toLocal();
   return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+bool _isSameLocalDay(DateTime first, DateTime second) {
+  final firstLocal = first.toLocal();
+  final secondLocal = second.toLocal();
+  return firstLocal.year == secondLocal.year &&
+      firstLocal.month == secondLocal.month &&
+      firstLocal.day == secondLocal.day;
+}
+
+bool _isToday(DateTime? timestamp, {DateTime? now}) {
+  if (timestamp == null) return false;
+  return _isSameLocalDay(timestamp, now ?? DateTime.now());
+}
+
+String _formatMessageDate(DateTime timestamp, {DateTime? now}) {
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = timestamp.toLocal();
+  final localNow = (now ?? DateTime.now()).toLocal();
+  if (_isSameLocalDay(local, localNow)) return 'Today';
+  final yesterday = DateTime(
+    localNow.year,
+    localNow.month,
+    localNow.day,
+  ).subtract(const Duration(days: 1));
+  if (_isSameLocalDay(local, yesterday)) return 'Yesterday';
+  final label =
+      '${weekdays[local.weekday - 1]}, ${local.day} ${months[local.month - 1]}';
+  return local.year == localNow.year ? label : '$label ${local.year}';
 }
 
 String _formatFileSize(int bytes) {
