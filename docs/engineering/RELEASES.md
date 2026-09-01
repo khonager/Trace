@@ -6,14 +6,17 @@ Trace uses two long-lived branches and immutable stable version tags:
 - `unstable` is the integration and development-build line.
 - `vMAJOR.MINOR.PATCH` tags identify stable releases and must match the version
   in `pubspec.yaml` without its Flutter build number.
-- Unstable pushes receive `vMAJOR.MINOR.PATCH-dev.RUN` prerelease tags when
-  production Android signing is configured.
+- The movable `dev-latest` tag and matching prerelease always identify the
+  newest signed `unstable` build. This is an intentional local exception to
+  Core's versioned-development-tag default so Obtainium has one stable update
+  source instead of accumulating a release for every commit.
 
 The Android workflow always uploads its APK as a short-lived Actions artifact.
-It publishes GitHub Releases only for signed builds. This prevents a public,
-debug-signed APK from establishing the wrong Android update identity. The
-workflow also installs Rust because Trace's vodozemac encryption dependency
-compiles native code during Android packaging.
+Signed pushes to `unstable` also create or update the `dev-latest` GitHub
+prerelease and replace its APK. Stable version tags create immutable releases.
+This prevents a public, debug-signed APK from establishing the wrong Android
+update identity. The workflow also installs Rust because Trace's vodozemac
+encryption dependency compiles native code during Android packaging.
 
 ## GitHub configuration
 

@@ -57,7 +57,9 @@ The reusable conventions behind this setup are summarized in the
 [![Add Trace to Obtainium](https://img.shields.io/badge/Add%20to-Obtainium-4A90E2?logo=android&logoColor=white)](https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fadd%2Fhttps%3A%2F%2Fgithub.com%2Fkhonager%2FTrace)
 
 The button adds this GitHub repository as Trace's update source. Obtainium can
-install it as soon as an Android APK is attached to a GitHub Release.
+install it from the rolling `dev-latest` GitHub prerelease. Until a stable
+release exists, enable **Include prereleases** in Trace's Obtainium source
+settings. Every successful signed `unstable` build replaces that release's APK.
 
 Web end-to-end encryption uses the checked-in vodozemac bundle in `web/pkg`.
 Deploy the web build over HTTPS. Hosts may also need COOP/COEP response headers
