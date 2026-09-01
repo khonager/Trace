@@ -4151,8 +4151,9 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
           Expanded(
             child: ReorderableListView.builder(
               itemCount: _spaces.length,
-              onReorderItem: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
                 setState(() {
+                  if (oldIndex < newIndex) newIndex -= 1;
                   _spaces.insert(newIndex, _spaces.removeAt(oldIndex));
                 });
               },

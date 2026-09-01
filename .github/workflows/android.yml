@@ -1,0 +1,222 @@
+name: Android
+
+on:
+  push:
+    branches: [main, unstable]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, unstable]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+  JAVA_VERSION: "17"
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      release_name: ${{ steps.metadata.outputs.release_name }}
+      signed: ${{ steps.signing.outputs.signed }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Determine build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(sed -n 's/^version:[[:space:]]*\([^+]*\).*/\1/p' pubspec.yaml | head -n 1)
+          if [ -z "$APP_VERSION" ]; then
+            echo "::error::Could not read the application version from pubspec.yaml"
+            exit 1
+          fi
+
+          CHANNEL=main
+          BUILD_NAME="$APP_VERSION-main.${GITHUB_RUN_NUMBER}"
+          RELEASE_TAG=""
+          RELEASE_NAME=""
+
+          if [ "$GITHUB_REF" = "refs/heads/unstable" ]; then
+            CHANNEL=unstable
+            BUILD_NAME="$APP_VERSION-dev.${GITHUB_RUN_NUMBER}"
+            RELEASE_TAG="v$APP_VERSION-dev.${GITHUB_RUN_NUMBER}"
+            RELEASE_NAME="Trace $APP_VERSION Dev Build ($GITHUB_RUN_NUMBER)"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            CHANNEL=stable
+            EXPECTED_TAG="v$APP_VERSION"
+            if [ "$GITHUB_REF_NAME" != "$EXPECTED_TAG" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match pubspec version $EXPECTED_TAG"
+              exit 1
+            fi
+            git fetch origin main
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::Stable tags must point to a commit contained in main"
+              exit 1
+            fi
+            BUILD_NAME="$APP_VERSION"
+            RELEASE_TAG="$GITHUB_REF_NAME"
+            RELEASE_NAME="Trace $APP_VERSION"
+          fi
+
+          ARTIFACT_NAME="Trace-$CHANNEL-android.apk"
+          {
+            echo "app_version=$APP_VERSION"
+            echo "build_name=$BUILD_NAME"
+            echo "channel=$CHANNEL"
+            echo "artifact_name=$ARTIFACT_NAME"
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_name=$RELEASE_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare build-time configuration
+        env:
+          TRACE_MEDIA_SEARCH_ENDPOINT: ${{ vars.TRACE_MEDIA_SEARCH_ENDPOINT }}
+          TRACE_GIPHY_API_KEY: ${{ secrets.TRACE_GIPHY_API_KEY }}
+        run: |
+          jq -n \
+            --arg endpoint "$TRACE_MEDIA_SEARCH_ENDPOINT" \
+            --arg giphy "$TRACE_GIPHY_API_KEY" \
+            '{
+              TRACE_MEDIA_SEARCH_ENDPOINT: $endpoint,
+              TRACE_GIPHY_API_KEY: $giphy
+            }' > .github-build-defines.json
+
+      - name: Configure Android signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRESENT=0
+          for VALUE in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS"; do
+            if [ -n "$VALUE" ]; then PRESENT=$((PRESENT + 1)); fi
+          done
+
+          if [ "$PRESENT" -ne 0 ] && [ "$PRESENT" -ne 4 ]; then
+            echo "::error::Android signing secrets must either all be set or all be absent"
+            exit 1
+          fi
+
+          if [ "$PRESENT" -eq 0 ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "::error::Stable releases require the four Android signing secrets"
+              exit 1
+            fi
+            echo "Building an Actions artifact with Flutter's debug signing key. It will not be published as a GitHub Release."
+            exit 0
+          fi
+
+          echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > android/upload-keystore.jks
+          {
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.jks"
+          } > android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ steps.metadata.outputs.build_name }}" \
+            --build-number="${{ github.run_number }}" \
+            --dart-define-from-file=.github-build-defines.json
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p release
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "release/${{ steps.metadata.outputs.artifact_name }}"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-${{ steps.metadata.outputs.channel }}-android-${{ github.run_number }}
+          path: release/${{ steps.metadata.outputs.artifact_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release-unstable:
+    name: Publish unstable prerelease
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/unstable' && needs.build.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: trace-unstable-android-${{ github.run_number }}
+          path: release
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: ${{ needs.build.outputs.release_name }}
+          body: |
+            Unstable development build from `${{ github.sha }}`.
+
+            This build may contain incomplete features and breaking changes.
+          files: release/${{ needs.build.outputs.artifact_name }}
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+
+  release-stable:
+    name: Publish stable release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: trace-stable-android-${{ github.run_number }}
+          path: release
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: ${{ needs.build.outputs.release_name }}
+          generate_release_notes: true
+          files: release/${{ needs.build.outputs.artifact_name }}
+          prerelease: false
+          make_latest: true
