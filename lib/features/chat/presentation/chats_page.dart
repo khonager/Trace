@@ -1402,6 +1402,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               final overviewLeft = -transitionTravel * progress;
               final conversationLeft =
                   initialWorkspaceLeft - transitionTravel * progress;
+              final promotedAvatarVisible =
+                  (progress > 0 || _avatarPromotion.value > 0) &&
+                  _avatarPromotion.value < 1;
               final scrollOffset = _overviewScrollController.hasClients
                   ? _overviewScrollController.offset
                   : 0.0;
@@ -1476,6 +1479,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         }),
                         onToggleMobileRail: _toggleMobileRail,
                         mobileRailVisible: _mobileRailCollapse.value < 0.5,
+                        showProfileAvatar: !promotedAvatarVisible,
                         backgroundCanvasWidth: width,
                         backgroundPageLeft: conversationLeft,
                         swipeBackgroundFrom: _manualBackgroundFromIndex == null
@@ -1487,20 +1491,25 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                             : progress,
                       ),
                     ),
-                    if ((progress > 0 || _avatarPromotion.value > 0) &&
-                        _avatarPromotion.value < 0.999)
+                    if (promotedAvatarVisible)
                       Positioned.fill(
                         key: const Key('selected-avatar-foreground'),
-                        child: ClipRect(
-                          clipper: const _ChatListBodyClipper(),
+                        child: ClipPath(
+                          clipper: _PromotedAvatarClipper(
+                            conversationLeft: conversationLeft,
+                          ),
                           child: Stack(
                             children: [
                               Positioned(
-                                left: _selectedAvatarLeft(
-                                  overviewWidth: overviewCardWidth,
-                                  overviewLeft: overviewLeft,
-                                  transitionProgress: progress,
-                                  transitionTravel: transitionTravel,
+                                left: _promotedAvatarLeft(
+                                  cardLeft: _selectedAvatarLeft(
+                                    overviewWidth: overviewCardWidth,
+                                    overviewLeft: overviewLeft,
+                                    transitionProgress: progress,
+                                    transitionTravel: transitionTravel,
+                                  ),
+                                  conversationLeft: conversationLeft,
+                                  promotion: _avatarPromotion.value,
                                 ),
                                 top: _lerp(
                                   _overviewHeaderHeight +
@@ -1508,19 +1517,22 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                                           _conversationRowHeight +
                                       (_conversationRowHeight - 50) / 2 -
                                       scrollOffset,
-                                  10,
+                                  7,
                                   Curves.easeOutCubic.transform(
                                     _avatarPromotion.value,
                                   ),
                                 ),
                                 width: 50,
-                                child: _ConversationAvatar(
+                                height: 50,
+                                child: _PromotedConversationAvatar(
                                   key: Key(
                                     'rail-${_conversations[_activeConversation].id}',
                                   ),
                                   conversation:
                                       _conversations[_activeConversation],
-                                  selected: true,
+                                  progress: Curves.easeOutCubic.transform(
+                                    _avatarPromotion.value,
+                                  ),
                                   onLoadMediaThumbnail: _loadMediaThumbnail,
                                   onTap: () => _onRailTap(_activeConversation),
                                 ),
@@ -1993,6 +2005,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     this.mobileRailVisible = true,
     this.onToggleList,
     this.listVisible = true,
+    this.showProfileAvatar = true,
     required this.backgroundCanvasWidth,
     this.backgroundPageLeft,
     this.swipeBackgroundFrom,
@@ -2030,6 +2043,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final bool mobileRailVisible;
   final VoidCallback? onToggleList;
   final bool listVisible;
+  final bool showProfileAvatar;
   final double backgroundCanvasWidth;
   final double? backgroundPageLeft;
   final _Conversation? swipeBackgroundFrom;
@@ -2068,6 +2082,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         mobileRailVisible: mobileRailVisible,
         onToggleList: onToggleList,
         listVisible: listVisible,
+        showProfileAvatar: showProfileAvatar,
         backgroundCanvasWidth: backgroundCanvasWidth,
         backgroundPageLeft: backgroundPageLeft,
         swipeBackgroundFrom: swipeBackgroundFrom,
@@ -2099,15 +2114,108 @@ double _selectedAvatarLeft({
       _chatAvatarRightInset;
 }
 
-class _ChatListBodyClipper extends CustomClipper<Rect> {
-  const _ChatListBodyClipper();
+double _promotedAvatarLeft({
+  required double cardLeft,
+  required double conversationLeft,
+  required double promotion,
+}) => _lerp(
+  cardLeft,
+  // The header image starts 58 px into the conversation pane. The promoted
+  // avatar keeps a 50 px layout box, so its 34 px final image is inset 8 px.
+  conversationLeft + 50,
+  Curves.easeOutCubic.transform(promotion),
+);
+
+class _PromotedAvatarClipper extends CustomClipper<Path> {
+  const _PromotedAvatarClipper({required this.conversationLeft});
+
+  final double conversationLeft;
 
   @override
-  Rect getClip(Size size) =>
-      Rect.fromLTRB(0, _overviewHeaderHeight, size.width, size.height);
+  Path getClip(Size size) => Path()
+    ..addRect(Rect.fromLTRB(0, _overviewHeaderHeight, size.width, size.height))
+    ..addRect(
+      Rect.fromLTRB(
+        conversationLeft.clamp(0.0, size.width),
+        0,
+        size.width,
+        _overviewHeaderHeight,
+      ),
+    );
 
   @override
-  bool shouldReclip(_ChatListBodyClipper oldClipper) => false;
+  bool shouldReclip(_PromotedAvatarClipper oldClipper) =>
+      oldClipper.conversationLeft != conversationLeft;
+}
+
+class _PromotedConversationAvatar extends StatelessWidget {
+  const _PromotedConversationAvatar({
+    super.key,
+    required this.conversation,
+    required this.progress,
+    required this.onLoadMediaThumbnail,
+    required this.onTap,
+  });
+
+  final _Conversation conversation;
+  final double progress;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderDiameter = _lerp(48, 34, progress);
+    final imageDiameter = _lerp(42, 34, progress);
+    return Semantics(
+      button: true,
+      label: 'Open ${conversation.name}',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: borderDiameter,
+              height: borderDiameter,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: progress < 1
+                    ? Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 1 - progress),
+                        width: 2,
+                      )
+                    : null,
+                shape: BoxShape.circle,
+              ),
+              child: _InitialsAvatar(
+                initials: conversation.initials,
+                imageAsset: conversation.profileAsset,
+                imageUrl: conversation.profileUrl,
+                mediaUri: conversation.profileMediaUri,
+                onLoadMediaThumbnail: onLoadMediaThumbnail,
+                diameter: imageDiameter,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHigh,
+              ),
+            ),
+            if (conversation.unreadCount > 0 && progress < 1)
+              Positioned(
+                right: 3,
+                bottom: 2,
+                child: Opacity(
+                  opacity: 1 - progress,
+                  child: _UnreadBadge(count: conversation.unreadCount),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ConversationAvatar extends StatelessWidget {
@@ -2209,6 +2317,7 @@ class _ConversationView extends StatelessWidget {
     required this.mobileRailVisible,
     required this.onToggleList,
     required this.listVisible,
+    required this.showProfileAvatar,
     required this.backgroundCanvasWidth,
     required this.backgroundPageLeft,
     required this.swipeBackgroundFrom,
@@ -2245,6 +2354,7 @@ class _ConversationView extends StatelessWidget {
   final bool mobileRailVisible;
   final VoidCallback? onToggleList;
   final bool listVisible;
+  final bool showProfileAvatar;
   final double backgroundCanvasWidth;
   final double? backgroundPageLeft;
   final _Conversation? swipeBackgroundFrom;
@@ -2284,34 +2394,37 @@ class _ConversationView extends StatelessWidget {
                           : Icons.menu_rounded,
                     ),
                   ),
-                if (conversation.profileMediaUri != null ||
-                    conversation.profileAsset != null) ...[
-                  const SizedBox(width: 2),
-                  Tooltip(
-                    message: 'Open profile picture',
-                    child: InkWell(
-                      key: Key('open-profile-picture-${conversation.id}'),
-                      onTap: () => onOpenProfilePicture(
-                        name: conversation.name,
-                        mediaUri: conversation.profileMediaUri,
-                        asset: conversation.profileAsset,
-                      ),
-                      customBorder: const CircleBorder(),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: _InitialsAvatar(
-                          initials: conversation.initials,
-                          imageAsset: conversation.profileAsset,
-                          imageUrl: conversation.profileUrl,
+                const SizedBox(width: 2),
+                IgnorePointer(
+                  ignoring: !showProfileAvatar,
+                  child: Opacity(
+                    opacity: showProfileAvatar ? 1 : 0,
+                    child: Tooltip(
+                      message: 'Open profile picture',
+                      child: InkWell(
+                        key: Key('open-profile-picture-${conversation.id}'),
+                        onTap: () => onOpenProfilePicture(
+                          name: conversation.name,
                           mediaUri: conversation.profileMediaUri,
-                          onLoadMediaThumbnail: onLoadMediaThumbnail,
-                          diameter: 34,
+                          asset: conversation.profileAsset,
+                        ),
+                        customBorder: const CircleBorder(),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: _InitialsAvatar(
+                            initials: conversation.initials,
+                            imageAsset: conversation.profileAsset,
+                            imageUrl: conversation.profileUrl,
+                            mediaUri: conversation.profileMediaUri,
+                            onLoadMediaThumbnail: onLoadMediaThumbnail,
+                            diameter: 34,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                ],
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

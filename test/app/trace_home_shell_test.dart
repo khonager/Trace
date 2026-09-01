@@ -388,6 +388,40 @@ void main() {
     expect(find.byKey(const Key('open-profile-picture-kai')), findsOneWidget);
   });
 
+  testWidgets('the card avatar moves into the header before handing off', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    await tester.tap(find.byKey(const Key('conversation-row-1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 180));
+
+    final promotedAvatar = find.byKey(const Key('rail-kai'));
+    final headerAvatar = find.byKey(const Key('open-profile-picture-kai'));
+    expect(find.byKey(const Key('selected-avatar-foreground')), findsOneWidget);
+    expect(promotedAvatar, findsOneWidget);
+    expect(
+      (tester.getCenter(promotedAvatar) - tester.getCenter(headerAvatar))
+          .distance,
+      lessThan(6),
+    );
+    expect(
+      tester
+          .widgetList<Opacity>(
+            find.ancestor(of: headerAvatar, matching: find.byType(Opacity)),
+          )
+          .any((opacity) => opacity.opacity == 0),
+      isTrue,
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('selected-avatar-foreground')), findsNothing);
+    expect(promotedAvatar, findsNothing);
+    expect(headerAvatar, findsOneWidget);
+  });
+
   testWidgets('the selected card and foreground avatar follow the drag', (
     tester,
   ) async {
