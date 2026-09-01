@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/app/trace_app.dart';
@@ -241,7 +244,7 @@ void main() {
     expect(find.byIcon(Icons.arrow_back), findsNothing);
 
     final pane = find.byKey(const Key('mobile-conversation-pane'));
-    expect(tester.getTopLeft(pane).dx, closeTo(64, 0.1));
+    expect(tester.getTopLeft(pane).dx, closeTo(48, 0.1));
 
     await tester.tap(find.byKey(const Key('mobile-chat-rail-toggle')));
     await tester.pumpAndSettle();
@@ -310,6 +313,43 @@ void main() {
     expect(card.contains(avatar), isTrue);
     expect(time.dx, lessThan(name.dx));
     expect(name.dx, lessThan(avatar.dx));
+    final preview = tester.getRect(
+      find.byKey(const Key('conversation-preview-maya')),
+    );
+    final avatarRect = tester.getRect(find.byKey(const Key('rail-maya')));
+    expect(avatarRect.left - preview.right, greaterThanOrEqualTo(10));
+  });
+
+  testWidgets('Matrix avatars use the authenticated media thumbnail loader', (
+    tester,
+  ) async {
+    final client = _TimelineSpyClient(
+      [
+        _room(
+          id: 'notes',
+          name: 'Notes',
+          avatarMediaUri: Uri.parse('mxc://example.org/notes-avatar'),
+        ),
+      ],
+      mediaBytes: base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: ChatsPage(client: client)));
+    await tester.pump();
+
+    expect(
+      client.thumbnailRequests,
+      contains(Uri.parse('mxc://example.org/notes-avatar')),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('profile-avatar-notes')),
+        matching: find.byType(Image),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('card avatars become the left-side chat tabs', (tester) async {
@@ -329,8 +369,23 @@ void main() {
     await tester.pumpAndSettle();
 
     final focusedX = tester.getTopLeft(avatar).dx;
-    expect(focusedX, closeTo(workspaceX + 7, 0.1));
+    expect(focusedX, closeTo(workspaceX - 18, 0.1));
+    final focusedAvatar = tester.getRect(avatar);
+    expect(focusedAvatar.right, closeTo(workspaceX + 32, 0.1));
     expect(find.byKey(const Key('conversation-title-family')), findsOneWidget);
+  });
+
+  testWidgets('settled chat keeps only the header copy of its avatar', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const TraceApp());
+
+    await tester.tap(find.byKey(const Key('conversation-row-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('selected-avatar-foreground')), findsNothing);
+    expect(find.byKey(const Key('rail-kai')), findsNothing);
+    expect(find.byKey(const Key('open-profile-picture-kai')), findsOneWidget);
   });
 
   testWidgets('the selected card and foreground avatar follow the drag', (
@@ -460,7 +515,11 @@ void main() {
   });
 }
 
-MatrixRoom _room({required String id, required String name}) => MatrixRoom(
+MatrixRoom _room({
+  required String id,
+  required String name,
+  Uri? avatarMediaUri,
+}) => MatrixRoom(
   id: id,
   name: name,
   preview: '',
@@ -470,10 +529,11 @@ MatrixRoom _room({required String id, required String name}) => MatrixRoom(
   encrypted: true,
   isDirect: true,
   directUserId: '@$id:example.org',
+  avatarMediaUri: avatarMediaUri,
 );
 
 final class _TimelineSpyClient implements MatrixClientPort {
-  _TimelineSpyClient(List<MatrixRoom> rooms)
+  _TimelineSpyClient(List<MatrixRoom> rooms, {this.mediaBytes})
     : current = MatrixClientSnapshot(
         phase: MatrixConnectionPhase.ready,
         rooms: rooms,
@@ -481,8 +541,10 @@ final class _TimelineSpyClient implements MatrixClientPort {
 
   @override
   final MatrixClientSnapshot current;
+  final List<int>? mediaBytes;
 
   final List<String> openedRoomIds = [];
+  final List<Uri> thumbnailRequests = [];
 
   @override
   Stream<MatrixClientSnapshot> get snapshots => const Stream.empty();
@@ -499,6 +561,16 @@ final class _TimelineSpyClient implements MatrixClientPort {
 
   @override
   Future<void> markRead(String roomId) async {}
+
+  @override
+  Future<Uint8List> downloadMediaThumbnail(
+    Uri mxcUri, {
+    int width = 96,
+    int height = 96,
+  }) async {
+    thumbnailRequests.add(mxcUri);
+    return Uint8List.fromList(mediaBytes ?? const []);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

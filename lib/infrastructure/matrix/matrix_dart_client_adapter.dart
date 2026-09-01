@@ -31,13 +31,16 @@ matrix.Client createMatrixDartClient({
   );
 }
 
-final class MatrixDartClientAdapter implements MatrixClientPort {
+final class MatrixDartClientAdapter
+    implements MatrixClientPort, MatrixAccountManagementPort {
   MatrixDartClientAdapter(this._client);
 
   final matrix.Client _client;
   final StreamController<MatrixClientSnapshot> _snapshots =
       StreamController.broadcast();
   final StreamController<MatrixVerificationPort> _verificationRequests =
+      StreamController.broadcast();
+  final StreamController<MatrixRoomKeyRequestPort> _roomKeyRequests =
       StreamController.broadcast();
   final Map<String, _MatrixDartTimeline> _timelines = {};
   final Map<String, Future<Uint8List>> _mediaDownloads = {};
@@ -60,6 +63,10 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
       _verificationRequests.stream;
 
   @override
+  Stream<MatrixRoomKeyRequestPort> get roomKeyRequests =>
+      _roomKeyRequests.stream;
+
+  @override
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
@@ -72,6 +79,16 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
         if (!_verificationRequests.isClosed) {
           _verificationRequests.add(verification);
         }
+      }),
+      _client.onRoomKeyRequest.stream.listen((request) {
+        final device = request.requestingDevice;
+        // Foreign users must never gain room history through a generic app
+        // prompt. The SDK already handles legitimate in-room sharing rules;
+        // Trace only asks the account owner about their own unverified device.
+        if (device.userId != _client.userID || _roomKeyRequests.isClosed) {
+          return;
+        }
+        _roomKeyRequests.add(_MatrixDartRoomKeyRequest(request));
       }),
     ]);
 
@@ -425,6 +442,38 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
   }
 
   @override
+  Future<void> updateProfile({
+    required String displayName,
+    Uint8List? avatarBytes,
+    String? avatarName,
+    String? avatarMimeType,
+    bool removeAvatar = false,
+  }) async {
+    final userId = _client.userID;
+    if (userId == null) throw Exception('Sign in before editing your profile.');
+    final normalizedName = displayName.trim();
+    if (normalizedName.isEmpty) {
+      throw Exception('Your display name cannot be empty.');
+    }
+    await _client.setProfileField(userId, 'displayname', {
+      'displayname': normalizedName,
+    });
+    if (removeAvatar) {
+      await _client.setAvatar(null);
+    } else if (avatarBytes != null) {
+      await _client.setAvatar(
+        matrix.MatrixFile(
+          bytes: avatarBytes,
+          name: avatarName ?? 'profile-picture',
+          mimeType: avatarMimeType ?? 'application/octet-stream',
+        ),
+      );
+    }
+    await _refreshAccount();
+    _publish();
+  }
+
+  @override
   Future<List<MatrixDevice>> getDevices() async {
     final devices = await _client.getDevices() ?? const <matrix.Device>[];
     final deviceKeys = _client.userDeviceKeys[_client.userID]?.deviceKeys;
@@ -443,6 +492,43 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
           ),
         )
         .toList(growable: false);
+  }
+
+  @override
+  Future<void> removeDevice(String deviceId, {String? password}) async {
+    final userId = _client.userID;
+    if (userId == null) throw Exception('Sign in before removing a session.');
+    if (deviceId == _client.deviceID) {
+      throw Exception('Use Sign out to remove the current session.');
+    }
+    try {
+      await _client.deleteDevice(deviceId);
+    } on matrix.MatrixException catch (error) {
+      if (!error.requireAdditionalAuthentication) rethrow;
+      if (password == null || password.isEmpty) {
+        throw const MatrixReauthenticationRequiredException();
+      }
+      final supportsPassword =
+          error.authenticationFlows?.any(
+            (flow) => flow.stages.contains(matrix.AuthenticationTypes.password),
+          ) ??
+          false;
+      if (!supportsPassword || error.session == null) {
+        throw Exception(
+          'This homeserver requires a sign-in method Trace cannot yet use to remove sessions.',
+        );
+      }
+      await _client.deleteDevice(
+        deviceId,
+        auth: matrix.AuthenticationPassword(
+          session: error.session,
+          password: password,
+          identifier: matrix.AuthenticationUserIdentifier(user: userId),
+        ),
+      );
+    }
+    await _client.updateUserDeviceKeys(additionalUsers: {userId});
+    _publish();
   }
 
   @override
@@ -485,6 +571,7 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     _client.backgroundSync = foreground;
     if (foreground && _client.isLogged()) {
       await _client.oneShotSync(timeout: Duration.zero);
+      await _requestMissingKeysForOpenTimelines();
     }
   }
 
@@ -664,6 +751,49 @@ final class MatrixDartClientAdapter implements MatrixClientPort {
     await _client.dispose();
     await _snapshots.close();
     await _verificationRequests.close();
+    await _roomKeyRequests.close();
+  }
+}
+
+final class _MatrixDartRoomKeyRequest implements MatrixRoomKeyRequestPort {
+  _MatrixDartRoomKeyRequest(this._request);
+
+  final encryption.RoomKeyRequest _request;
+  bool _resolved = false;
+
+  @override
+  String get userId => _request.requestingDevice.userId;
+
+  @override
+  String get deviceId => _request.requestingDevice.deviceId ?? 'Unknown';
+
+  @override
+  String get deviceName =>
+      _request.requestingDevice.deviceDisplayName?.trim().isNotEmpty == true
+      ? _request.requestingDevice.deviceDisplayName!.trim()
+      : deviceId;
+
+  @override
+  String get roomName => _request.room.getLocalizedDisplayname();
+
+  @override
+  Future<void> share() async {
+    if (_resolved) return;
+    if (_request.request.canceled) {
+      throw Exception('The requesting device cancelled this key request.');
+    }
+    await _request.forwardKey();
+    _resolved = true;
+  }
+
+  @override
+  Future<void> reject() async {
+    if (_resolved) return;
+    _request.request.canceled = true;
+    _request.keyManager.incomingShareRequests.remove(
+      _request.request.requestId,
+    );
+    _resolved = true;
   }
 }
 
@@ -812,6 +942,9 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
         .map(_mapEvent)
         .toList(growable: false);
     _updates.add(_current);
+    // New undecryptable events should start recovery without waiting for the
+    // user to tap each placeholder. The SDK deduplicates by Megolm session.
+    unawaited(requestMissingKeys());
   }
 
   bool _shouldShow(matrix.Event event) =>
@@ -1038,8 +1171,17 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
       }
       final sessionId = event.content['session_id'] as String?;
       if (sessionId == null || !requestedSessions.add(sessionId)) continue;
+      final senderKey = event.content['sender_key'] as String?;
+      if (senderKey == null) continue;
       try {
-        await event.requestKey();
+        await event.room.client.encryption?.keyManager.maybeAutoRequest(
+          event.room.id,
+          sessionId,
+          senderKey,
+          tryOnlineBackup: true,
+          onlineKeyBackupOnly: false,
+          awaitRequest: true,
+        );
       } catch (_) {
         // A missing key may be absent from backup and offline devices. Keep
         // the placeholder visible; users can retry the individual event.

@@ -19,11 +19,14 @@ class MatrixVerificationOverlay extends StatelessWidget {
     builder: (context, child) {
       final verification = controller.activeVerification;
       final snapshot = controller.verificationSnapshot;
+      final roomKeyRequest = controller.activeRoomKeyRequest;
       return Stack(
         children: [
           child!,
-          if (verification != null && snapshot != null) ...[
+          if ((verification != null && snapshot != null) ||
+              roomKeyRequest != null)
             const ModalBarrier(dismissible: false, color: Colors.black54),
+          if (verification != null && snapshot != null)
             SafeArea(
               child: Center(
                 child: _VerificationCard(
@@ -34,10 +37,116 @@ class MatrixVerificationOverlay extends StatelessWidget {
                 ),
               ),
             ),
-          ],
+          if (verification == null && roomKeyRequest != null)
+            SafeArea(
+              child: Center(
+                child: MatrixRoomKeyRequestDialog(
+                  key: ObjectKey(roomKeyRequest),
+                  request: roomKeyRequest,
+                  onShare: controller.shareActiveRoomKey,
+                  onReject: controller.rejectActiveRoomKey,
+                ),
+              ),
+            ),
         ],
       );
     },
+  );
+}
+
+class MatrixRoomKeyRequestDialog extends StatefulWidget {
+  const MatrixRoomKeyRequestDialog({
+    super.key,
+    required this.request,
+    required this.onShare,
+    required this.onReject,
+  });
+
+  final MatrixRoomKeyRequestPort request;
+  final Future<void> Function() onShare;
+  final Future<void> Function() onReject;
+
+  @override
+  State<MatrixRoomKeyRequestDialog> createState() =>
+      _RoomKeyRequestDialogState();
+}
+
+class _RoomKeyRequestDialogState extends State<MatrixRoomKeyRequestDialog> {
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: AlertDialog(
+        key: const Key('matrix-room-key-request-dialog'),
+        title: const Text('Share a missing message key?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '${widget.request.deviceName} (${widget.request.deviceId}) '
+              'requested an encryption key for ${widget.request.roomName}.',
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Share only if this is your device and you just used “Request key” there. This shares one encryption session, not your complete history.',
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'To avoid repeated requests after a reinstall, restore Encryption recovery once on the requesting device.',
+            ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 12),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  error,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+            if (_busy) ...[
+              const SizedBox(height: 14),
+              const LinearProgressIndicator(),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            key: const Key('reject-room-key-request'),
+            onPressed: _busy ? null : () => _run(widget.onReject),
+            child: const Text('Don’t share'),
+          ),
+          FilledButton(
+            key: const Key('share-room-key-request'),
+            onPressed: _busy ? null : () => _run(widget.onShare),
+            child: const Text('Share key'),
+          ),
+        ],
+      ),
+    ),
   );
 }
 

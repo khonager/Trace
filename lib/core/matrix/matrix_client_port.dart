@@ -12,6 +12,10 @@ abstract interface class MatrixClientPort {
 
   Stream<MatrixVerificationPort> get verificationRequests;
 
+  /// Requests from another device on this account for a missing room key that
+  /// the SDK could not safely approve automatically.
+  Stream<MatrixRoomKeyRequestPort> get roomKeyRequests;
+
   Future<void> initialize();
 
   Future<void> login(MatrixLoginRequest request);
@@ -106,6 +110,20 @@ abstract interface class MatrixClientPort {
   Future<void> close();
 }
 
+/// Account operations which may require profile uploads or re-authentication.
+abstract interface class MatrixAccountManagementPort {
+  Future<void> updateProfile({
+    required String displayName,
+    Uint8List? avatarBytes,
+    String? avatarName,
+    String? avatarMimeType,
+    bool removeAvatar = false,
+  });
+
+  /// Invalidates the access token associated with another Matrix device.
+  Future<void> removeDevice(String deviceId, {String? password});
+}
+
 abstract interface class MatrixTimelinePort {
   List<MatrixMessage> get current;
 
@@ -156,6 +174,21 @@ abstract interface class MatrixVerificationPort {
   Future<void> continueWithRecovery(String recoveryKeyOrPassphrase);
 
   Future<void> close();
+}
+
+abstract interface class MatrixRoomKeyRequestPort {
+  String get userId;
+
+  String get deviceId;
+
+  String get deviceName;
+
+  String get roomName;
+
+  /// Shares only the requested Megolm session, not all room history.
+  Future<void> share();
+
+  Future<void> reject();
 }
 
 sealed class MatrixLoginRequest {
@@ -468,4 +501,11 @@ final class MatrixRoomNotFoundException implements Exception {
 
   @override
   String toString() => 'No Matrix room is cached for $roomId.';
+}
+
+final class MatrixReauthenticationRequiredException implements Exception {
+  const MatrixReauthenticationRequiredException();
+
+  @override
+  String toString() => 'Confirm your Matrix account password to continue.';
 }

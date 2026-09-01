@@ -24,9 +24,12 @@ class MatrixSessionController extends ChangeNotifier
   StreamSubscription<MatrixClientSnapshot>? _subscription;
   StreamSubscription<MatrixVerificationPort>? _verificationRequestSubscription;
   StreamSubscription<MatrixVerificationSnapshot>? _verificationSubscription;
+  StreamSubscription<MatrixRoomKeyRequestPort>? _roomKeyRequestSubscription;
   final List<MatrixVerificationPort> _verificationQueue = [];
+  final List<MatrixRoomKeyRequestPort> _roomKeyRequestQueue = [];
   MatrixVerificationPort? _activeVerification;
   MatrixVerificationSnapshot? _verificationSnapshot;
+  MatrixRoomKeyRequestPort? _activeRoomKeyRequest;
   MatrixClientSnapshot _snapshot = const MatrixClientSnapshot.starting();
   bool _busy = false;
   String? _actionError;
@@ -43,6 +46,7 @@ class MatrixSessionController extends ChangeNotifier
   String? get actionError => _actionError;
   MatrixVerificationPort? get activeVerification => _activeVerification;
   MatrixVerificationSnapshot? get verificationSnapshot => _verificationSnapshot;
+  MatrixRoomKeyRequestPort? get activeRoomKeyRequest => _activeRoomKeyRequest;
   List<MatrixSavedProfile> get savedProfiles => _savedProfiles;
   String get activeProfileId => _activeProfileId;
   bool get addingProfile => _addingProfile;
@@ -89,6 +93,9 @@ class MatrixSessionController extends ChangeNotifier
     });
     _verificationRequestSubscription = client.verificationRequests.listen(
       _queueVerification,
+    );
+    _roomKeyRequestSubscription = client.roomKeyRequests.listen(
+      _queueRoomKeyRequest,
     );
   }
 
@@ -161,6 +168,7 @@ class MatrixSessionController extends ChangeNotifier
     final removedId = _activeProfileId;
     await client.logout();
     await _clearVerifications();
+    await _clearRoomKeyRequests();
     _savedProfiles = _savedProfiles
         .where((profile) => profile.id != removedId)
         .toList(growable: false);
@@ -215,7 +223,10 @@ class MatrixSessionController extends ChangeNotifier
     _subscription = null;
     await _verificationRequestSubscription?.cancel();
     _verificationRequestSubscription = null;
+    await _roomKeyRequestSubscription?.cancel();
+    _roomKeyRequestSubscription = null;
     await _clearVerifications();
+    await _clearRoomKeyRequests();
     await client.close();
     client = await factory(profileId);
     _activeProfileId = profileId;
@@ -316,6 +327,36 @@ class MatrixSessionController extends ChangeNotifier
     }
   }
 
+  void _queueRoomKeyRequest(MatrixRoomKeyRequestPort request) {
+    if (_activeRoomKeyRequest == null) {
+      _activeRoomKeyRequest = request;
+    } else {
+      _roomKeyRequestQueue.add(request);
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> shareActiveRoomKey() async {
+    final request = _activeRoomKeyRequest;
+    if (request == null) return;
+    await request.share();
+    _advanceRoomKeyRequest();
+  }
+
+  Future<void> rejectActiveRoomKey() async {
+    final request = _activeRoomKeyRequest;
+    if (request == null) return;
+    await request.reject();
+    _advanceRoomKeyRequest();
+  }
+
+  void _advanceRoomKeyRequest() {
+    _activeRoomKeyRequest = _roomKeyRequestQueue.isEmpty
+        ? null
+        : _roomKeyRequestQueue.removeAt(0);
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> _clearVerifications() async {
     await _verificationSubscription?.cancel();
     _verificationSubscription = null;
@@ -326,6 +367,17 @@ class MatrixSessionController extends ChangeNotifier
     _verificationQueue.clear();
     _activeVerification = null;
     _verificationSnapshot = null;
+  }
+
+  Future<void> _clearRoomKeyRequests() async {
+    final requests = _roomKeyRequestQueue.toList(growable: true);
+    final activeRequest = _activeRoomKeyRequest;
+    if (activeRequest != null) requests.insert(0, activeRequest);
+    _activeRoomKeyRequest = null;
+    _roomKeyRequestQueue.clear();
+    for (final request in requests) {
+      await request.reject();
+    }
   }
 
   Future<void> _perform(Future<void> Function() action) async {
@@ -407,7 +459,9 @@ class MatrixSessionController extends ChangeNotifier
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_subscription?.cancel());
     unawaited(_verificationRequestSubscription?.cancel());
+    unawaited(_roomKeyRequestSubscription?.cancel());
     unawaited(_clearVerifications());
+    unawaited(_clearRoomKeyRequests());
     unawaited(_linkSubscription?.cancel());
     unawaited(client.close());
     super.dispose();

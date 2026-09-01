@@ -16,7 +16,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 const double _overviewHeaderHeight = 132;
 const double _conversationRowHeight = 92;
-const double _chatRailWidth = 64;
+const double _chatRailWidth = 48;
+const double _chatAvatarRightInset = 16;
 const double _chatPeekWidth = 28;
 const double _desktopSplitBreakpoint = 900;
 const String _peopleContextId = 'trace:people';
@@ -533,7 +534,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Room key requested. Keep another verified Matrix device online.',
+            'Room key requested. Approve it on another Trace device, or keep a verified Matrix device online.',
           ),
         ),
       );
@@ -1280,6 +1281,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                 transitionTravel: 1,
                 scrollController: _overviewScrollController,
                 onOpen: _selectConversation,
+                onLoadMediaThumbnail: _loadMediaThumbnail,
                 onSearch: _showSearch,
                 onNewChat: _showNewChat,
                 highlightActive: true,
@@ -1356,6 +1358,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           transitionTravel: 1,
           scrollController: _overviewScrollController,
           onOpen: (_) {},
+          onLoadMediaThumbnail: _loadMediaThumbnail,
           onSearch: _showSearch,
           onNewChat: _showNewChat,
         );
@@ -1424,6 +1427,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         transitionTravel: transitionTravel,
                         scrollController: _overviewScrollController,
                         onOpen: _openConversation,
+                        onLoadMediaThumbnail: _loadMediaThumbnail,
                         onSearch: _showSearch,
                         onNewChat: _showNewChat,
                       ),
@@ -1483,31 +1487,46 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                             : progress,
                       ),
                     ),
-                    if (progress > 0 || _avatarPromotion.value > 0)
-                      Positioned(
+                    if ((progress > 0 || _avatarPromotion.value > 0) &&
+                        _avatarPromotion.value < 0.999)
+                      Positioned.fill(
                         key: const Key('selected-avatar-foreground'),
-                        left: _selectedAvatarLeft(
-                          overviewWidth: overviewCardWidth,
-                          overviewLeft: overviewLeft,
-                          transitionProgress: progress,
-                          transitionTravel: transitionTravel,
-                        ),
-                        top: _lerp(
-                          _overviewHeaderHeight +
-                              _activeConversation * _conversationRowHeight +
-                              (_conversationRowHeight - 50) / 2 -
-                              scrollOffset,
-                          10,
-                          Curves.easeOutCubic.transform(_avatarPromotion.value),
-                        ),
-                        width: 50,
-                        child: _ConversationAvatar(
-                          key: Key(
-                            'rail-${_conversations[_activeConversation].id}',
+                        child: ClipRect(
+                          clipper: const _ChatListBodyClipper(),
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                left: _selectedAvatarLeft(
+                                  overviewWidth: overviewCardWidth,
+                                  overviewLeft: overviewLeft,
+                                  transitionProgress: progress,
+                                  transitionTravel: transitionTravel,
+                                ),
+                                top: _lerp(
+                                  _overviewHeaderHeight +
+                                      _activeConversation *
+                                          _conversationRowHeight +
+                                      (_conversationRowHeight - 50) / 2 -
+                                      scrollOffset,
+                                  10,
+                                  Curves.easeOutCubic.transform(
+                                    _avatarPromotion.value,
+                                  ),
+                                ),
+                                width: 50,
+                                child: _ConversationAvatar(
+                                  key: Key(
+                                    'rail-${_conversations[_activeConversation].id}',
+                                  ),
+                                  conversation:
+                                      _conversations[_activeConversation],
+                                  selected: true,
+                                  onLoadMediaThumbnail: _loadMediaThumbnail,
+                                  onTap: () => _onRailTap(_activeConversation),
+                                ),
+                              ),
+                            ],
                           ),
-                          conversation: _conversations[_activeConversation],
-                          selected: true,
-                          onTap: () => _onRailTap(_activeConversation),
                         ),
                       ),
                   ],
@@ -1535,6 +1554,7 @@ class _ChatOverview extends StatelessWidget {
     required this.transitionTravel,
     required this.scrollController,
     required this.onOpen,
+    required this.onLoadMediaThumbnail,
     required this.onSearch,
     required this.onNewChat,
     this.highlightActive = false,
@@ -1552,6 +1572,7 @@ class _ChatOverview extends StatelessWidget {
   final double transitionTravel;
   final ScrollController scrollController;
   final ValueChanged<int> onOpen;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final VoidCallback onSearch;
   final VoidCallback onNewChat;
   final bool highlightActive;
@@ -1695,6 +1716,7 @@ class _ChatOverview extends StatelessWidget {
                           avatarVisible:
                               index != activeIndex ||
                               (transitionProgress == 0 && avatarPromotion == 0),
+                          onLoadMediaThumbnail: onLoadMediaThumbnail,
                           onTap: () => onOpen(index),
                           onLongPress: () => onTogglePinned(conversation),
                         ),
@@ -1760,6 +1782,7 @@ class _ConversationRow extends StatelessWidget {
     required this.conversation,
     required this.selected,
     required this.avatarVisible,
+    required this.onLoadMediaThumbnail,
     required this.onTap,
     this.onLongPress,
   });
@@ -1767,6 +1790,7 @@ class _ConversationRow extends StatelessWidget {
   final _Conversation conversation;
   final bool selected;
   final bool avatarVisible;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
@@ -1861,7 +1885,7 @@ class _ConversationRow extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const SizedBox(width: _chatRailWidth + 6),
+                      const SizedBox(width: 50 + _chatAvatarRightInset + 12),
                     ],
                   ),
                 ),
@@ -1871,13 +1895,14 @@ class _ConversationRow extends StatelessWidget {
         ),
         if (avatarVisible)
           Positioned(
-            right: 7,
+            right: _chatAvatarRightInset,
             top: (_conversationRowHeight - 50) / 2,
             width: 50,
             child: _ConversationAvatar(
               key: Key('rail-${conversation.id}'),
               conversation: conversation,
               selected: selected,
+              onLoadMediaThumbnail: onLoadMediaThumbnail,
               onTap: onTap,
             ),
           ),
@@ -2067,7 +2092,22 @@ double _selectedAvatarLeft({
   final selectedLag =
       transitionTravel *
       (transitionProgress - _delayedSelectedProgress(transitionProgress));
-  return overviewLeft + selectedLag + overviewWidth - 57;
+  return overviewLeft +
+      selectedLag +
+      overviewWidth -
+      50 -
+      _chatAvatarRightInset;
+}
+
+class _ChatListBodyClipper extends CustomClipper<Rect> {
+  const _ChatListBodyClipper();
+
+  @override
+  Rect getClip(Size size) =>
+      Rect.fromLTRB(0, _overviewHeaderHeight, size.width, size.height);
+
+  @override
+  bool shouldReclip(_ChatListBodyClipper oldClipper) => false;
 }
 
 class _ConversationAvatar extends StatelessWidget {
@@ -2075,11 +2115,13 @@ class _ConversationAvatar extends StatelessWidget {
     super.key,
     required this.conversation,
     required this.selected,
+    required this.onLoadMediaThumbnail,
     required this.onTap,
   });
 
   final _Conversation conversation;
   final bool selected;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final VoidCallback onTap;
 
   @override
@@ -2114,6 +2156,8 @@ class _ConversationAvatar extends StatelessWidget {
                   initials: conversation.initials,
                   imageAsset: conversation.profileAsset,
                   imageUrl: conversation.profileUrl,
+                  mediaUri: conversation.profileMediaUri,
+                  onLoadMediaThumbnail: onLoadMediaThumbnail,
                   diameter: selected ? 42 : 40,
                   backgroundColor: Theme.of(
                     context,
@@ -2259,6 +2303,8 @@ class _ConversationView extends StatelessWidget {
                           initials: conversation.initials,
                           imageAsset: conversation.profileAsset,
                           imageUrl: conversation.profileUrl,
+                          mediaUri: conversation.profileMediaUri,
+                          onLoadMediaThumbnail: onLoadMediaThumbnail,
                           diameter: 34,
                         ),
                       ),
@@ -3852,9 +3898,8 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
           Expanded(
             child: ReorderableListView.builder(
               itemCount: _spaces.length,
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
                 setState(() {
-                  if (newIndex > oldIndex) newIndex -= 1;
                   _spaces.insert(newIndex, _spaces.removeAt(oldIndex));
                 });
               },
@@ -4116,6 +4161,8 @@ class _InitialsAvatar extends StatelessWidget {
     required this.initials,
     this.imageAsset,
     this.imageUrl,
+    this.mediaUri,
+    this.onLoadMediaThumbnail,
     this.diameter = 46,
     this.backgroundColor,
   });
@@ -4123,6 +4170,8 @@ class _InitialsAvatar extends StatelessWidget {
   final String initials;
   final String? imageAsset;
   final Uri? imageUrl;
+  final Uri? mediaUri;
+  final Future<Uint8List> Function(Uri)? onLoadMediaThumbnail;
   final double diameter;
   final Color? backgroundColor;
 
@@ -4138,6 +4187,19 @@ class _InitialsAvatar extends StatelessWidget {
           filterQuality: FilterQuality.medium,
         ),
       );
+    }
+
+    if (mediaUri case final uri?) {
+      final loader = onLoadMediaThumbnail;
+      if (loader != null) {
+        return _MatrixMediaAvatar(
+          uri: uri,
+          load: loader,
+          initials: initials,
+          diameter: diameter,
+          backgroundColor: backgroundColor,
+        );
+      }
     }
 
     if (imageUrl case final url?) {
@@ -4161,6 +4223,75 @@ class _InitialsAvatar extends StatelessWidget {
       initials: initials,
       diameter: diameter,
       backgroundColor: backgroundColor,
+    );
+  }
+}
+
+class _MatrixMediaAvatar extends StatefulWidget {
+  const _MatrixMediaAvatar({
+    required this.uri,
+    required this.load,
+    required this.initials,
+    required this.diameter,
+    required this.backgroundColor,
+  });
+
+  final Uri uri;
+  final Future<Uint8List> Function(Uri) load;
+  final String initials;
+  final double diameter;
+  final Color? backgroundColor;
+
+  @override
+  State<_MatrixMediaAvatar> createState() => _MatrixMediaAvatarState();
+}
+
+class _MatrixMediaAvatarState extends State<_MatrixMediaAvatar> {
+  late Future<Uint8List> _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _image = widget.load(widget.uri);
+  }
+
+  @override
+  void didUpdateWidget(_MatrixMediaAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri || oldWidget.load != widget.load) {
+      _image = widget.load(widget.uri);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List>(
+      future: _image,
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes == null) {
+          return _InitialsFallback(
+            initials: widget.initials,
+            diameter: widget.diameter,
+            backgroundColor: widget.backgroundColor,
+          );
+        }
+        return ClipOval(
+          child: Image.memory(
+            bytes,
+            width: widget.diameter,
+            height: widget.diameter,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, _, _) => _InitialsFallback(
+              initials: widget.initials,
+              diameter: widget.diameter,
+              backgroundColor: widget.backgroundColor,
+            ),
+          ),
+        );
+      },
     );
   }
 }
