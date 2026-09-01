@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -352,6 +353,83 @@ void main() {
     );
   });
 
+  testWidgets('a changed Matrix avatar refreshes the chat background', (
+    tester,
+  ) async {
+    final firstUri = Uri.parse('mxc://example.org/first-avatar');
+    final secondUri = Uri.parse('mxc://example.org/second-avatar');
+    final client = _TimelineSpyClient(
+      [_room(id: 'notes', name: 'Notes', avatarMediaUri: firstUri)],
+      mediaBytes: base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    addTearDown(client.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: ChatsPage(client: client)));
+    await tester.pump();
+
+    final background = find.byKey(
+      const Key('conversation-background-image-notes'),
+    );
+    final firstImage = tester.widget<Image>(background);
+    final firstProvider = firstImage.image as ResizeImage;
+    expect(firstProvider.imageProvider, isA<MemoryImage>());
+
+    client.updateRooms([
+      _room(id: 'notes', name: 'Notes', avatarMediaUri: secondUri),
+    ]);
+    await tester.pump();
+    await tester.pump();
+
+    final secondImage = tester.widget<Image>(background);
+    final secondProvider = secondImage.image as ResizeImage;
+    expect(client.thumbnailRequests, containsAll([firstUri, secondUri]));
+    expect(secondProvider.imageProvider, isA<MemoryImage>());
+    expect(
+      secondProvider.imageProvider,
+      isNot(same(firstProvider.imageProvider)),
+    );
+  });
+
+  testWidgets('a cached Matrix background is ready on the first switch frame', (
+    tester,
+  ) async {
+    final client = _TimelineSpyClient(
+      [
+        _room(
+          id: 'one',
+          name: 'One',
+          avatarMediaUri: Uri.parse('mxc://example.org/avatar-one'),
+        ),
+        _room(
+          id: 'two',
+          name: 'Two',
+          avatarMediaUri: Uri.parse('mxc://example.org/avatar-two'),
+        ),
+      ],
+      mediaBytes: base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    addTearDown(client.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: ChatsPage(client: client)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('conversation-row-1')));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('conversation-background-image-two')),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget(find.byKey(const Key('conversation-background-image-two'))),
+      isA<Image>(),
+    );
+  });
+
   testWidgets('card avatars become the left-side chat tabs', (tester) async {
     await tester.pumpWidget(const TraceApp());
 
@@ -568,20 +646,34 @@ MatrixRoom _room({
 
 final class _TimelineSpyClient implements MatrixClientPort {
   _TimelineSpyClient(List<MatrixRoom> rooms, {this.mediaBytes})
-    : current = MatrixClientSnapshot(
+    : _current = MatrixClientSnapshot(
         phase: MatrixConnectionPhase.ready,
         rooms: rooms,
       );
 
+  MatrixClientSnapshot _current;
+  final _snapshotController =
+      StreamController<MatrixClientSnapshot>.broadcast();
+
   @override
-  final MatrixClientSnapshot current;
+  MatrixClientSnapshot get current => _current;
   final List<int>? mediaBytes;
 
   final List<String> openedRoomIds = [];
   final List<Uri> thumbnailRequests = [];
 
   @override
-  Stream<MatrixClientSnapshot> get snapshots => const Stream.empty();
+  Stream<MatrixClientSnapshot> get snapshots => _snapshotController.stream;
+
+  void updateRooms(List<MatrixRoom> rooms) {
+    _current = MatrixClientSnapshot(
+      phase: MatrixConnectionPhase.ready,
+      rooms: rooms,
+    );
+    _snapshotController.add(_current);
+  }
+
+  Future<void> dispose() => _snapshotController.close();
 
   @override
   Stream<MatrixVerificationPort> get verificationRequests =>

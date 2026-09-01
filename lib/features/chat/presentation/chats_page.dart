@@ -75,6 +75,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   final Map<String, StreamSubscription<List<MatrixMessage>>>
   _timelineSubscriptions = {};
   final Map<String, String> _drafts = {};
+  final Map<Uri, Uint8List> _mediaThumbnailBytes = {};
+  final Map<Uri, Future<Uint8List>> _mediaThumbnailLoads = {};
   Timer? _typingStopTimer;
   String? _replyToEventId;
   String? _replyToLabel;
@@ -574,10 +576,30 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }
 
   Future<Uint8List> _loadMediaThumbnail(Uri uri) {
+    final cached = _mediaThumbnailBytes[uri];
+    if (cached != null) return Future.value(cached);
+    final pending = _mediaThumbnailLoads[uri];
+    if (pending != null) return pending;
     final client = widget.client;
     if (client == null) throw StateError('Matrix media is not available.');
-    return client.downloadMediaThumbnail(uri);
+    final load = client
+        .downloadMediaThumbnail(uri)
+        .then(
+          (bytes) {
+            _mediaThumbnailBytes[uri] = bytes;
+            _mediaThumbnailLoads.remove(uri);
+            return bytes;
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _mediaThumbnailLoads.remove(uri);
+            Error.throwWithStackTrace(error, stackTrace);
+          },
+        );
+    _mediaThumbnailLoads[uri] = load;
+    return load;
   }
+
+  Uint8List? _cachedMediaThumbnail(Uri uri) => _mediaThumbnailBytes[uri];
 
   Future<void> _showProfilePicture({
     required String name,
@@ -1314,6 +1336,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onRequestMessageKey: _requestMessageKey,
               onLoadAttachment: _loadAttachment,
               onLoadMediaThumbnail: _loadMediaThumbnail,
+              cachedMediaThumbnail: _cachedMediaThumbnail,
               onOpenProfilePicture: _showProfilePicture,
               onSaveAttachment: _saveAttachment,
               onOpenImage: _showImage,
@@ -1457,6 +1480,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onRequestMessageKey: _requestMessageKey,
                         onLoadAttachment: _loadAttachment,
                         onLoadMediaThumbnail: _loadMediaThumbnail,
+                        cachedMediaThumbnail: _cachedMediaThumbnail,
                         onOpenProfilePicture: _showProfilePicture,
                         onSaveAttachment: _saveAttachment,
                         onOpenImage: _showImage,
@@ -1989,6 +2013,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
+    required this.cachedMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onOpenImage,
@@ -2027,6 +2052,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final Uint8List? Function(Uri) cachedMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final ValueChanged<_ChatMessage> onOpenImage;
@@ -2066,6 +2092,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onRequestMessageKey: onRequestMessageKey,
         onLoadAttachment: onLoadAttachment,
         onLoadMediaThumbnail: onLoadMediaThumbnail,
+        cachedMediaThumbnail: cachedMediaThumbnail,
         onOpenProfilePicture: onOpenProfilePicture,
         onSaveAttachment: onSaveAttachment,
         onOpenImage: onOpenImage,
@@ -2301,6 +2328,7 @@ class _ConversationView extends StatelessWidget {
     required this.onRequestMessageKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
+    required this.cachedMediaThumbnail,
     required this.onOpenProfilePicture,
     required this.onSaveAttachment,
     required this.onOpenImage,
@@ -2338,6 +2366,7 @@ class _ConversationView extends StatelessWidget {
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final Uint8List? Function(Uri) cachedMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
   final ValueChanged<_ChatMessage> onSaveAttachment;
   final ValueChanged<_ChatMessage> onOpenImage;
@@ -2510,6 +2539,8 @@ class _ConversationView extends StatelessWidget {
                     progress: swipeBackgroundProgress ?? 0,
                     canvasWidth: backgroundCanvasWidth,
                     pageLeft: backgroundPageLeft,
+                    onLoadMediaThumbnail: onLoadMediaThumbnail,
+                    cachedMediaThumbnail: cachedMediaThumbnail,
                   )
                 else
                   AnimatedSwitcher(
@@ -2526,6 +2557,8 @@ class _ConversationView extends StatelessWidget {
                       conversation: conversation,
                       canvasWidth: backgroundCanvasWidth,
                       pageLeft: backgroundPageLeft,
+                      onLoadMediaThumbnail: onLoadMediaThumbnail,
+                      cachedMediaThumbnail: cachedMediaThumbnail,
                     ),
                   ),
                 NotificationListener<ScrollNotification>(
@@ -2615,6 +2648,8 @@ class _ManualBackgroundReveal extends StatelessWidget {
     required this.progress,
     required this.canvasWidth,
     required this.pageLeft,
+    required this.onLoadMediaThumbnail,
+    required this.cachedMediaThumbnail,
   });
 
   final _Conversation previousConversation;
@@ -2622,6 +2657,8 @@ class _ManualBackgroundReveal extends StatelessWidget {
   final double progress;
   final double canvasWidth;
   final double? pageLeft;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final Uint8List? Function(Uri) cachedMediaThumbnail;
 
   @override
   Widget build(BuildContext context) {
@@ -2632,6 +2669,8 @@ class _ManualBackgroundReveal extends StatelessWidget {
           conversation: previousConversation,
           canvasWidth: canvasWidth,
           pageLeft: pageLeft,
+          onLoadMediaThumbnail: onLoadMediaThumbnail,
+          cachedMediaThumbnail: cachedMediaThumbnail,
         ),
         Opacity(
           key: Key('manual-background-reveal-${conversation.id}'),
@@ -2640,6 +2679,8 @@ class _ManualBackgroundReveal extends StatelessWidget {
             conversation: conversation,
             canvasWidth: canvasWidth,
             pageLeft: pageLeft,
+            onLoadMediaThumbnail: onLoadMediaThumbnail,
+            cachedMediaThumbnail: cachedMediaThumbnail,
           ),
         ),
       ],
@@ -2653,17 +2694,22 @@ class _ConversationBackground extends StatelessWidget {
     required this.conversation,
     required this.canvasWidth,
     required this.pageLeft,
+    required this.onLoadMediaThumbnail,
+    required this.cachedMediaThumbnail,
   });
 
   final _Conversation conversation;
   final double canvasWidth;
   final double? pageLeft;
+  final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
+  final Uint8List? Function(Uri) cachedMediaThumbnail;
 
   @override
   Widget build(BuildContext context) {
     final profileAsset = conversation.profileAsset;
     final profileUrl = conversation.profileUrl;
-    if (profileAsset == null && profileUrl == null) {
+    final profileMediaUri = conversation.profileMediaUri;
+    if (profileAsset == null && profileMediaUri == null && profileUrl == null) {
       return ColoredBox(
         key: Key('conversation-background-${conversation.id}'),
         color: Theme.of(context).colorScheme.surface,
@@ -2746,6 +2792,20 @@ class _ConversationBackground extends StatelessWidget {
                                       cacheHeight: 8,
                                       filterQuality: FilterQuality.medium,
                                     )
+                                  : profileMediaUri != null
+                                  ? _MatrixMediaBackgroundImage(
+                                      key: ValueKey(
+                                        'matrix-background-${conversation.id}',
+                                      ),
+                                      imageKey: Key(
+                                        'conversation-background-image-${conversation.id}',
+                                      ),
+                                      uri: profileMediaUri,
+                                      load: onLoadMediaThumbnail,
+                                      cachedBytes: cachedMediaThumbnail(
+                                        profileMediaUri,
+                                      ),
+                                    )
                                   : Image.network(
                                       profileUrl.toString(),
                                       key: Key(
@@ -2777,6 +2837,86 @@ class _ConversationBackground extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _MatrixMediaBackgroundImage extends StatefulWidget {
+  const _MatrixMediaBackgroundImage({
+    super.key,
+    required this.imageKey,
+    required this.uri,
+    required this.load,
+    required this.cachedBytes,
+  });
+
+  final Key imageKey;
+  final Uri uri;
+  final Future<Uint8List> Function(Uri) load;
+  final Uint8List? cachedBytes;
+
+  @override
+  State<_MatrixMediaBackgroundImage> createState() =>
+      _MatrixMediaBackgroundImageState();
+}
+
+class _MatrixMediaBackgroundImageState
+    extends State<_MatrixMediaBackgroundImage> {
+  Uint8List? _bytes;
+  var _loadGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = widget.cachedBytes;
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_MatrixMediaBackgroundImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri || oldWidget.load != widget.load) {
+      _bytes = widget.cachedBytes ?? _bytes;
+      _load();
+    }
+  }
+
+  void _load() {
+    final generation = ++_loadGeneration;
+    widget
+        .load(widget.uri)
+        .then(
+          (bytes) {
+            if (!mounted || generation != _loadGeneration) return;
+            setState(() => _bytes = bytes);
+          },
+          onError: (Object _) {
+            // Keep the previous background during a transient media failure. A
+            // later avatar URI update will start another authenticated download.
+          },
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    return AnimatedOpacity(
+      opacity: bytes == null ? 0 : 1,
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      child: bytes == null
+          ? const SizedBox.expand()
+          : Image.memory(
+              bytes,
+              key: widget.imageKey,
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+              gaplessPlayback: true,
+              cacheWidth: 16,
+              cacheHeight: 16,
+              filterQuality: FilterQuality.low,
+              errorBuilder: (_, _, _) => const SizedBox.expand(),
+            ),
     );
   }
 }
