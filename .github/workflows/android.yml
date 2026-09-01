@@ -20,6 +20,7 @@ jobs:
       contents: read
     outputs:
       artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      build_name: ${{ steps.metadata.outputs.build_name }}
       release_tag: ${{ steps.metadata.outputs.release_tag }}
       release_name: ${{ steps.metadata.outputs.release_name }}
       signed: ${{ steps.signing.outputs.signed }}
@@ -67,8 +68,8 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/unstable" ]; then
             CHANNEL=unstable
             BUILD_NAME="$APP_VERSION-dev.${GITHUB_RUN_NUMBER}"
-            RELEASE_TAG="v$APP_VERSION-dev.${GITHUB_RUN_NUMBER}"
-            RELEASE_NAME="Trace $APP_VERSION Dev Build ($GITHUB_RUN_NUMBER)"
+            RELEASE_TAG="dev-latest"
+            RELEASE_NAME="Latest Trace Unstable Build"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             CHANNEL=stable
             EXPECTED_TAG="v$APP_VERSION"
@@ -172,11 +173,23 @@ jobs:
   release-unstable:
     name: Publish unstable prerelease
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/unstable' && needs.build.outputs.signed == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/unstable' && needs.build.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move rolling unstable tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force dev-latest "$GITHUB_SHA"
+          git push origin refs/tags/dev-latest --force
+
       - name: Download APK
         uses: actions/download-artifact@v4
         with:
@@ -189,13 +202,17 @@ jobs:
           tag_name: ${{ needs.build.outputs.release_tag }}
           name: ${{ needs.build.outputs.release_name }}
           body: |
-            Unstable development build from `${{ github.sha }}`.
+            Automated unstable development build from `${{ github.sha }}`.
+
+            Version: `${{ needs.build.outputs.build_name }}`
 
             This build may contain incomplete features and breaking changes.
+            In Obtainium, enable **Include prereleases** for this repository.
           files: release/${{ needs.build.outputs.artifact_name }}
           prerelease: true
           make_latest: false
           target_commitish: ${{ github.sha }}
+          overwrite_files: true
 
   release-stable:
     name: Publish stable release
