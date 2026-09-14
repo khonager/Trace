@@ -106,7 +106,8 @@ items as implemented.
 - [x] `EXTERNAL` Integrated open-web and curated GIF search
 - [x] `EXTERNAL` Integrated sticker search
 - [x] `MATRIX+ANDROID` Send rich GIF/image content inserted by a keyboard
-- [ ] `TRACE` Favourite and recent GIFs
+- [x] `TRACE` Favourite GIFs and stickers
+- [ ] `TRACE` Recent GIFs and stickers
 - [ ] `EXTERNAL` GIF content-safety controls and provider selection
 - [ ] `MATRIX+TRACE` Memes, image captions, and simple markup tools
 - [ ] `TRACE` Confetti or other optional message effects

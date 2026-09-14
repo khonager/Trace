@@ -2,6 +2,15 @@
 
 Final result: passed
 
+## Media favorites and sticker density
+
+- GIF and sticker search results now have a 48-pixel favorite control and a
+  dedicated Favorites filter with an explicit empty state.
+- Sticker results use contained artwork, 12 pixels of breathing room, and a
+  148-pixel maximum tile extent; GIFs retain the larger 220-pixel crop.
+- Widget coverage verifies the favorite flow and the sticker grid's exact
+  extent and fit. GIF and sticker favorites remain separate in persistence.
+
 ## Mobile header controls
 
 - The focused mobile chat no longer has a redundant back arrow; horizontal

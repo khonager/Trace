@@ -11,6 +11,7 @@ import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/chat/application/composer_actions.dart';
 import 'package:trace/features/chat/application/configured_media_search_client.dart';
+import 'package:trace/features/chat/application/media_favorites.dart';
 import 'package:trace/features/chat/application/media_search.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -45,6 +46,7 @@ class ChatsPage extends StatefulWidget {
     this.openLink,
     this.pickAttachment,
     this.mediaSearch,
+    this.mediaFavoriteStore,
     this.composerActionPinStore,
   });
 
@@ -54,6 +56,7 @@ class ChatsPage extends StatefulWidget {
   final Future<bool> Function(Uri uri)? openLink;
   final Future<ChatAttachment?> Function()? pickAttachment;
   final MediaSearchPort? mediaSearch;
+  final MediaFavoriteStore? mediaFavoriteStore;
   final ComposerActionPinStore? composerActionPinStore;
 
   @override
@@ -89,6 +92,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _backgroundsPrecached = false;
   bool _attachmentBusy = false;
   late final MediaSearchPort _mediaSearch;
+  late final MediaFavoriteStore _mediaFavoriteStore;
   late final ComposerActionPinStore _composerActionPinStore;
   List<ComposerAction> _pinnedComposerActions = const [];
   double _transitionTravel = 1;
@@ -98,6 +102,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _mediaSearch = widget.mediaSearch ?? ConfiguredMediaSearchClient();
+    _mediaFavoriteStore =
+        widget.mediaFavoriteStore ?? SharedPreferencesMediaFavoriteStore();
     _composerActionPinStore =
         widget.composerActionPinStore ??
         SharedPreferencesComposerActionPinStore();
@@ -870,8 +876,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) =>
-          _MediaSearchSheet(kind: kind, mediaSearch: _mediaSearch),
+      builder: (context) => _MediaSearchSheet(
+        kind: kind,
+        mediaSearch: _mediaSearch,
+        favoriteStore: _mediaFavoriteStore,
+      ),
     );
     if (result == null || !mounted) return;
     setState(() => _attachmentBusy = true);
@@ -3864,10 +3873,15 @@ IconData _composerActionIcon(ComposerAction action) => switch (action) {
 };
 
 class _MediaSearchSheet extends StatefulWidget {
-  const _MediaSearchSheet({required this.kind, required this.mediaSearch});
+  const _MediaSearchSheet({
+    required this.kind,
+    required this.mediaSearch,
+    required this.favoriteStore,
+  });
 
   final MediaSearchKind kind;
   final MediaSearchPort mediaSearch;
+  final MediaFavoriteStore favoriteStore;
 
   @override
   State<_MediaSearchSheet> createState() => _MediaSearchSheetState();
@@ -3876,8 +3890,27 @@ class _MediaSearchSheet extends StatefulWidget {
 class _MediaSearchSheetState extends State<_MediaSearchSheet> {
   final TextEditingController _queryController = TextEditingController();
   List<MediaSearchResult> _results = const [];
+  List<MediaSearchResult> _favorites = const [];
+  late final Future<void> _favoritesLoad;
   String? _error;
   bool _searching = false;
+  bool _showFavorites = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _favoritesLoad = _loadFavorites();
+  }
+
+  Future<void> _loadFavorites() async {
+    try {
+      final favorites = await widget.favoriteStore.load(widget.kind);
+      if (mounted) setState(() => _favorites = favorites);
+    } catch (_) {
+      // Favorites are a convenience; search remains available if local
+      // preferences cannot be read.
+    }
+  }
 
   @override
   void dispose() {
@@ -3891,6 +3924,7 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
     setState(() {
       _searching = true;
       _error = null;
+      _showFavorites = false;
     });
     try {
       final results = await widget.mediaSearch.search(
@@ -3904,6 +3938,28 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
     } finally {
       if (mounted) setState(() => _searching = false);
     }
+  }
+
+  Future<void> _toggleFavorite(MediaSearchResult result) async {
+    await _favoritesLoad;
+    if (!mounted) return;
+    final id = mediaFavoriteId(result);
+    final updated = _favorites.toList(growable: true);
+    final existingIndex = updated.indexWhere(
+      (favorite) => mediaFavoriteId(favorite) == id,
+    );
+    if (existingIndex == -1) {
+      updated.insert(0, result);
+      if (updated.length > mediaFavoriteLimitPerKind) {
+        updated.removeRange(mediaFavoriteLimitPerKind, updated.length);
+      }
+    } else {
+      updated.removeAt(existingIndex);
+    }
+    setState(() => _favorites = List.unmodifiable(updated));
+    unawaited(
+      widget.favoriteStore.save(widget.kind, updated).catchError((_) {}),
+    );
   }
 
   @override
@@ -3961,6 +4017,28 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
             ),
           ),
           const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilterChip(
+                key: Key('media-favorites-${widget.kind.name}'),
+                selected: _showFavorites,
+                avatar: Icon(
+                  _showFavorites ? Icons.star : Icons.star_outline,
+                  size: 18,
+                ),
+                label: Text('Favorites (${_favorites.length})'),
+                onSelected: (selected) {
+                  setState(() {
+                    _showFavorites = selected;
+                    _error = null;
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
           Expanded(child: _buildBody(label)),
         ],
       ),
@@ -3968,6 +4046,16 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
   }
 
   Widget _buildBody(String label) {
+    if (_showFavorites) {
+      if (_favorites.isEmpty) {
+        return _MediaSearchMessage(
+          icon: Icons.star_outline,
+          title: 'No favorite $label yet',
+          body: 'Tap the star on a result to keep it here.',
+        );
+      }
+      return _buildGrid(_favorites);
+    }
     if (!widget.mediaSearch.isConfigured) {
       return const _MediaSearchMessage(
         icon: Icons.settings_outlined,
@@ -3998,17 +4086,24 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
             : 'Try a different search.',
       );
     }
+    return _buildGrid(_results);
+  }
+
+  Widget _buildGrid(List<MediaSearchResult> results) {
+    final stickers = widget.kind == MediaSearchKind.sticker;
+    final favoriteIds = _favorites.map(mediaFavoriteId).toSet();
     return GridView.builder(
       key: const Key('media-search-results'),
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 220,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: stickers ? 148 : 220,
         mainAxisSpacing: 8,
         crossAxisSpacing: 8,
       ),
-      itemCount: _results.length,
+      itemCount: results.length,
       itemBuilder: (context, index) {
-        final result = _results[index];
+        final result = results[index];
+        final isFavorite = favoriteIds.contains(mediaFavoriteId(result));
         return Semantics(
           button: true,
           label: '${result.title}, from ${result.source}',
@@ -4023,11 +4118,26 @@ class _MediaSearchSheetState extends State<_MediaSearchSheet> {
                 children: [
                   ColoredBox(
                     color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                    child: Image.network(
-                      result.previewUri.toString(),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          const Icon(Icons.broken_image_outlined, size: 36),
+                    child: Padding(
+                      padding: EdgeInsets.all(stickers ? 12 : 0),
+                      child: Image.network(
+                        result.previewUri.toString(),
+                        fit: stickers ? BoxFit.contain : BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            const Icon(Icons.broken_image_outlined, size: 36),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: IconButton.filledTonal(
+                      key: Key('media-favorite-${result.id}'),
+                      tooltip: isFavorite
+                          ? 'Remove from favorites'
+                          : 'Add to favorites',
+                      onPressed: () => unawaited(_toggleFavorite(result)),
+                      icon: Icon(isFavorite ? Icons.star : Icons.star_outline),
                     ),
                   ),
                   Positioned(

@@ -70,6 +70,11 @@ Search terms and client IP addresses are visible to the contacted provider or
 relay. Production relays should avoid query logging, use durable rate limits,
 and publish a retention policy.
 
+Favoriting a result stores its provider ID, title, source, media URLs, MIME
+type, and optional dimensions in local app preferences. GIF and sticker
+favorites are kept separately, up to 100 of each, and are not synced to Matrix
+or sent back to a search provider.
+
 ## Android keyboard media
 
 The composer also accepts GIF, PNG, JPEG, and WebP content inserted through

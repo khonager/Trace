@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/chat/application/composer_actions.dart';
+import 'package:trace/features/chat/application/media_favorites.dart';
 import 'package:trace/features/chat/application/media_search.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
@@ -98,6 +99,66 @@ void main() {
     expect(client.sentBytes, Uint8List.fromList([71, 73, 70]));
   });
 
+  testWidgets('favorites a GIF and shows it in the favorites view', (
+    tester,
+  ) async {
+    final favoriteStore = _MemoryFavoriteStore();
+    await _openChat(
+      tester,
+      client: _AttachmentClient(),
+      picker: () async => null,
+      mediaSearch: _FakeMediaSearch(),
+      favoriteStore: favoriteStore,
+    );
+
+    await _chooseComposerAction(tester, 'Search GIFs');
+    await tester.enterText(find.byKey(const Key('media-search-gif')), 'waves');
+    await tester.tap(find.byKey(const Key('media-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('media-favorite-wave')));
+    await tester.pump();
+
+    expect(find.text('Favorites (1)'), findsOneWidget);
+    expect(favoriteStore.savedKind, MediaSearchKind.gif);
+    expect(favoriteStore.favorites.single.id, 'wave');
+
+    await tester.tap(find.byKey(const Key('media-favorites-gif')));
+    await tester.pump();
+    expect(find.byKey(const Key('media-search-result-wave')), findsOneWidget);
+    expect(find.byTooltip('Remove from favorites'), findsOneWidget);
+  });
+
+  testWidgets('shows stickers in smaller contained tiles', (tester) async {
+    await _openChat(
+      tester,
+      client: _AttachmentClient(),
+      picker: () async => null,
+      mediaSearch: _FakeMediaSearch(),
+    );
+
+    await _chooseComposerAction(tester, 'Search stickers');
+    await tester.enterText(
+      find.byKey(const Key('media-search-sticker')),
+      'waves',
+    );
+    await tester.tap(find.byKey(const Key('media-search-submit')));
+    await tester.pumpAndSettle();
+
+    final grid = tester.widget<GridView>(
+      find.byKey(const Key('media-search-results')),
+    );
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithMaxCrossAxisExtent;
+    expect(delegate.maxCrossAxisExtent, 148);
+    final preview = tester.widget<Image>(
+      find.descendant(
+        of: find.byKey(const Key('media-search-result-wave')),
+        matching: find.byType(Image),
+      ),
+    );
+    expect(preview.fit, BoxFit.contain);
+  });
+
   testWidgets('sends rich GIF content inserted by an Android keyboard', (
     tester,
   ) async {
@@ -136,6 +197,7 @@ Future<void> _openChat(
   required Future<ChatAttachment?> Function() picker,
   ComposerActionPinStore? pinStore,
   MediaSearchPort? mediaSearch,
+  MediaFavoriteStore? favoriteStore,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(800, 900);
@@ -150,12 +212,30 @@ Future<void> _openChat(
           pickAttachment: picker,
           composerActionPinStore: pinStore,
           mediaSearch: mediaSearch,
+          mediaFavoriteStore: favoriteStore ?? _MemoryFavoriteStore(),
         ),
       ),
     ),
   );
   await tester.tap(find.byKey(const Key('conversation-row-0')));
   await tester.pumpAndSettle();
+}
+
+final class _MemoryFavoriteStore implements MediaFavoriteStore {
+  List<MediaSearchResult> favorites = const [];
+  MediaSearchKind? savedKind;
+
+  @override
+  Future<List<MediaSearchResult>> load(MediaSearchKind kind) async => favorites;
+
+  @override
+  Future<void> save(
+    MediaSearchKind kind,
+    List<MediaSearchResult> favorites,
+  ) async {
+    savedKind = kind;
+    this.favorites = List.unmodifiable(favorites);
+  }
 }
 
 final class _MemoryPinStore implements ComposerActionPinStore {
