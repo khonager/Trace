@@ -48,6 +48,30 @@ void main() {
     expect(find.text('notes.txt sent.'), findsOneWidget);
   });
 
+  testWidgets('opens the photo picker and sends an image', (tester) async {
+    final client = _AttachmentClient();
+    var photoPickerOpens = 0;
+    await _openChat(
+      tester,
+      client: client,
+      picker: () async => null,
+      photoPicker: () async {
+        photoPickerOpens++;
+        return ChatAttachment(
+          name: 'holiday.heic',
+          readAsBytes: () async => Uint8List.fromList([1, 2, 3]),
+        );
+      },
+    );
+
+    await _chooseComposerAction(tester, 'Attach photo');
+
+    expect(photoPickerOpens, 1);
+    expect(client.sentName, 'holiday.heic');
+    expect(client.sentMimeType, 'image/heic');
+    expect(client.sentBytes, Uint8List.fromList([1, 2, 3]));
+  });
+
   testWidgets('long pressing an action pins it above the input field', (
     tester,
   ) async {
@@ -195,6 +219,7 @@ Future<void> _openChat(
   WidgetTester tester, {
   required _AttachmentClient client,
   required Future<ChatAttachment?> Function() picker,
+  Future<ChatAttachment?> Function()? photoPicker,
   ComposerActionPinStore? pinStore,
   MediaSearchPort? mediaSearch,
   MediaFavoriteStore? favoriteStore,
@@ -210,6 +235,7 @@ Future<void> _openChat(
         body: ChatsPage(
           client: client,
           pickAttachment: picker,
+          pickPhoto: photoPicker,
           composerActionPinStore: pinStore,
           mediaSearch: mediaSearch,
           mediaFavoriteStore: favoriteStore ?? _MemoryFavoriteStore(),

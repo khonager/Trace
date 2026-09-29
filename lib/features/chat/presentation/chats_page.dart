@@ -45,6 +45,7 @@ class ChatsPage extends StatefulWidget {
     this.saveAttachment,
     this.openLink,
     this.pickAttachment,
+    this.pickPhoto,
     this.mediaSearch,
     this.mediaFavoriteStore,
     this.composerActionPinStore,
@@ -55,6 +56,7 @@ class ChatsPage extends StatefulWidget {
   saveAttachment;
   final Future<bool> Function(Uri uri)? openLink;
   final Future<ChatAttachment?> Function()? pickAttachment;
+  final Future<ChatAttachment?> Function()? pickPhoto;
   final MediaSearchPort? mediaSearch;
   final MediaFavoriteStore? mediaFavoriteStore;
   final ComposerActionPinStore? composerActionPinStore;
@@ -160,6 +162,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     switch (action) {
       case ComposerAction.attachFile:
         unawaited(_sendAttachment());
+      case ComposerAction.attachPhoto:
+        unawaited(_sendAttachment(photo: true));
       case ComposerAction.gifSearch:
         unawaited(_showMediaSearch(MediaSearchKind.gif));
       case ComposerAction.stickerSearch:
@@ -788,13 +792,16 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _sendAttachment() async {
+  Future<void> _sendAttachment({bool photo = false}) async {
     final client = widget.client;
     if (client == null || _attachmentBusy || _conversations.isEmpty) return;
     setState(() => _attachmentBusy = true);
     var fileSelected = false;
     try {
-      final file = await (widget.pickAttachment ?? pickChatAttachment)();
+      final picker = photo
+          ? (widget.pickPhoto ?? pickChatPhoto)
+          : (widget.pickAttachment ?? pickChatAttachment);
+      final file = await picker();
       if (file == null || !mounted) return;
       fileSelected = true;
       final roomId = _conversations[_activeConversation].id;
@@ -818,7 +825,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${fileSelected ? 'File was not sent' : 'File picker could not open'}: '
+              '${fileSelected ? (photo ? 'Photo was not sent' : 'File was not sent') : (photo ? 'Photo picker could not open' : 'File picker could not open')}: '
               '${_errorText(error)}',
             ),
           ),
@@ -3856,18 +3863,21 @@ class _MessageComposer extends StatelessWidget {
 
 String _composerActionLabel(ComposerAction action) => switch (action) {
   ComposerAction.attachFile => 'Attach file',
+  ComposerAction.attachPhoto => 'Attach photo',
   ComposerAction.gifSearch => 'Search GIFs',
   ComposerAction.stickerSearch => 'Search stickers',
 };
 
 String _composerActionShortLabel(ComposerAction action) => switch (action) {
   ComposerAction.attachFile => 'File',
+  ComposerAction.attachPhoto => 'Photo',
   ComposerAction.gifSearch => 'GIF',
   ComposerAction.stickerSearch => 'Sticker',
 };
 
 IconData _composerActionIcon(ComposerAction action) => switch (action) {
   ComposerAction.attachFile => Icons.attach_file,
+  ComposerAction.attachPhoto => Icons.photo_library_outlined,
   ComposerAction.gifSearch => Icons.gif_box_outlined,
   ComposerAction.stickerSearch => Icons.emoji_emotions_outlined,
 };
@@ -5253,6 +5263,9 @@ String _mimeTypeFor(String? extension) => switch (extension?.toLowerCase()) {
   'png' => 'image/png',
   'gif' => 'image/gif',
   'webp' => 'image/webp',
+  'heic' => 'image/heic',
+  'heif' => 'image/heif',
+  'avif' => 'image/avif',
   'mp3' => 'audio/mpeg',
   'm4a' => 'audio/mp4',
   'ogg' || 'opus' => 'audio/ogg',

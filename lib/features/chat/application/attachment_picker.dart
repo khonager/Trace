@@ -1,6 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image_picker_android/image_picker_android.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:trace/features/chat/application/attachment_picker_fallback_stub.dart'
     if (dart.library.io) 'attachment_picker_fallback_io.dart';
 
@@ -15,6 +18,18 @@ Future<ChatAttachment?> pickChatAttachment() async {
     if (fallback.available) return fallback.file;
     Error.throwWithStackTrace(error, stackTrace);
   }
+}
+
+/// Opens the Android system photo picker when available, directly into photos.
+Future<ChatAttachment?> pickChatPhoto() async {
+  final implementation = ImagePickerPlatform.instance;
+  if (implementation is ImagePickerAndroid) {
+    implementation.useAndroidPhotoPicker = true;
+  }
+  final photo = await ImagePicker().pickImage(source: ImageSource.gallery);
+  return photo == null
+      ? null
+      : ChatAttachment(name: photo.name, readAsBytes: photo.readAsBytes);
 }
 
 final class ChatAttachment {
