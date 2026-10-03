@@ -46,6 +46,21 @@
           JAVA_HOME = pkgs.jdk17.home;
 
           shellHook = ''
+            # Nix's rustup patches the downloaded Rust linker wrapper with a
+            # store path. Refresh the toolchain if that path was collected.
+            rustc_path=$(rustup which rustc --toolchain stable 2>/dev/null || true)
+            if [ -n "$rustc_path" ]; then
+              rust_toolchain=$(dirname "$(dirname "$rustc_path")")
+              for linker_wrapper in "$rust_toolchain"/lib/rustlib/*/bin/gcc-ld/ld.lld; do
+                [ -f "$linker_wrapper" ] || continue
+                wrapper_target=$(sed -n 's/.*"\(\/nix\/store\/[^\"]*\/nix-support\/ld-wrapper.sh\)".*/\1/p' "$linker_wrapper" | head -n 1)
+                if [ -n "$wrapper_target" ] && [ ! -x "$wrapper_target" ]; then
+                  echo "Refreshing Rust toolchain: its Nix linker wrapper is missing"
+                  rustup toolchain install stable --force || return $?
+                  break
+                fi
+              done
+            fi
             echo "Trace development shell"
             echo "Flutter: $(flutter --version | head -n 1)"
           '';

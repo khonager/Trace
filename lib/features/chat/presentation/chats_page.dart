@@ -4271,6 +4271,8 @@ class _SpaceOrderSheetState extends State<_SpaceOrderSheet> {
           Expanded(
             child: ReorderableListView.builder(
               itemCount: _spaces.length,
+              // CI's Flutter 3.41 does not yet provide onReorderItem.
+              // ignore: deprecated_member_use
               onReorder: (oldIndex, newIndex) {
                 setState(() {
                   if (oldIndex < newIndex) newIndex -= 1;

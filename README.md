@@ -32,6 +32,10 @@ flutter test
 flutter analyze
 ```
 
+The development shell repairs Rust's linker wrapper if its referenced Nix
+store path has been removed. This may download the Rust toolchain on the first
+shell launch after a Nix update.
+
 Run one of the supported targets:
 
 ```sh
