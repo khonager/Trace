@@ -4377,25 +4377,29 @@ class _ReceivedImageDialogState extends State<_ReceivedImageDialog> {
             ),
           ),
           Expanded(
-            child: Center(
-              child: FutureBuilder<MatrixAttachmentData>(
-                future: widget.image,
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return const Padding(
+            child: FutureBuilder<MatrixAttachmentData>(
+              future: widget.image,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
                         'This image could not be loaded.',
                         style: TextStyle(color: Colors.white70),
                       ),
-                    );
-                  }
-                  if (!snapshot.hasData) {
-                    return const CircularProgressIndicator(color: Colors.white);
-                  }
-                  return InteractiveViewer(
-                    minScale: .5,
-                    maxScale: 8,
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  );
+                }
+                return InteractiveViewer(
+                  minScale: .5,
+                  maxScale: 8,
+                  child: SizedBox.expand(
                     child: Image.memory(
                       snapshot.data!.bytes,
                       key: const Key('received-image-preview'),
@@ -4406,9 +4410,9 @@ class _ReceivedImageDialogState extends State<_ReceivedImageDialog> {
                         style: TextStyle(color: Colors.white70),
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -4489,25 +4493,27 @@ class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
             Expanded(
               child: ColoredBox(
                 color: Colors.black,
-                child: Center(
-                  child: FutureBuilder<Uint8List>(
-                    future: widget.image,
-                    builder: (context, snapshot) {
-                      if (snapshot.hasError) {
-                        return const Padding(
+                child: FutureBuilder<Uint8List>(
+                  future: widget.image,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(
+                        child: Padding(
                           padding: EdgeInsets.all(24),
                           child: Text(
                             'This profile picture could not be loaded.',
                             style: TextStyle(color: Colors.white70),
                           ),
-                        );
-                      }
-                      if (!snapshot.hasData) {
-                        return const CircularProgressIndicator();
-                      }
-                      return InteractiveViewer(
-                        minScale: .5,
-                        maxScale: 6,
+                        ),
+                      );
+                    }
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return InteractiveViewer(
+                      minScale: .5,
+                      maxScale: 6,
+                      child: SizedBox.expand(
                         child: Image.memory(
                           snapshot.data!,
                           key: const Key('profile-picture-preview'),
@@ -4518,9 +4524,9 @@ class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
                             style: TextStyle(color: Colors.white70),
                           ),
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

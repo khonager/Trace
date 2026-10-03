@@ -54,6 +54,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('received-image-preview')), findsOneWidget);
+    final viewerSize = tester.getSize(find.byType(InteractiveViewer));
+    expect(viewerSize.width, 800);
+    expect(
+      tester.getSize(find.byKey(const Key('received-image-preview'))),
+      viewerSize,
+    );
     expect(timeline.thumbnailRequests, [true, false]);
 
     await tester.tap(find.byKey(const Key('download-received-image')));

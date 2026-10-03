@@ -189,6 +189,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('profile-picture-preview')), findsOneWidget);
+    final viewerSize = tester.getSize(find.byType(InteractiveViewer));
+    expect(viewerSize.width, greaterThan(600));
+    expect(
+      tester.getSize(find.byKey(const Key('profile-picture-preview'))),
+      viewerSize,
+    );
     expect(find.byKey(const Key('download-profile-picture')), findsOneWidget);
     expect(find.text('Maya profile picture'), findsOneWidget);
   });
