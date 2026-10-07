@@ -897,7 +897,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       final roomId = _conversations[_activeConversation].id;
       await client.sendFile(
         roomId: roomId,
-        name: _mediaFileName(result, downloaded.mimeType),
+        name:
+            '${kind == MediaSearchKind.sticker ? 'sticker-' : ''}${_mediaFileName(result, downloaded.mimeType)}',
         bytes: downloaded.bytes,
         mimeType: downloaded.mimeType,
       );
@@ -3152,6 +3153,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         onOpen: widget.onOpenImage,
                         width: widget.message.attachmentWidth,
                         height: widget.message.attachmentHeight,
+                        isSticker:
+                            (widget.message.attachmentName ??
+                                    widget.message.body)
+                                .startsWith('sticker-'),
                       )
                     else if (widget.message.kind != MatrixMessageKind.text)
                       _FileAttachment(
@@ -3560,6 +3565,7 @@ class _ImageAttachment extends StatelessWidget {
     required this.onOpen,
     required this.width,
     required this.height,
+    required this.isSticker,
   });
 
   final Future<MatrixAttachmentData> data;
@@ -3569,6 +3575,7 @@ class _ImageAttachment extends StatelessWidget {
   final VoidCallback onOpen;
   final int? width;
   final int? height;
+  final bool isSticker;
 
   @override
   Widget build(BuildContext context) {
@@ -3581,12 +3588,13 @@ class _ImageAttachment extends StatelessWidget {
               ? width! / height!
               : 4 / 3;
           final aspectRatio = rawAspectRatio.clamp(.2, 5.0);
-          var previewWidth = 272.0;
+          var previewWidth = isSticker ? 144.0 : 272.0;
           var previewHeight = previewWidth / aspectRatio;
-          if (previewHeight > 300) {
-            previewHeight = 300;
+          final maxHeight = isSticker ? 144.0 : 300.0;
+          if (previewHeight > maxHeight) {
+            previewHeight = maxHeight;
             previewWidth = previewHeight * aspectRatio;
-          } else if (previewHeight < 96) {
+          } else if (!isSticker && previewHeight < 96) {
             previewHeight = 96;
           }
           return Semantics(
@@ -3620,10 +3628,10 @@ class _ImageAttachment extends StatelessWidget {
         if (snapshot.hasError) {
           return _AttachmentError(foreground: foreground, onRetry: onRetry);
         }
-        return const SizedBox(
-          width: 272,
-          height: 160,
-          child: Center(child: CircularProgressIndicator()),
+        return SizedBox(
+          width: isSticker ? 144 : 272,
+          height: isSticker ? 144 : 160,
+          child: const Center(child: CircularProgressIndicator()),
         );
       },
     );
