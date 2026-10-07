@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +21,7 @@ void main() {
 
   tearDown(() {
     controller.dispose();
+    client.disposeStream();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
   });
@@ -79,10 +82,45 @@ void main() {
     expect(client.removedDeviceId, 'OLD');
     expect(client.removalPassword, 'correct horse');
   });
+
+  testWidgets(
+    'own avatar uses authenticated Matrix media and opens full size',
+    (tester) async {
+      client.avatarUri = Uri.parse('mxc://example.org/avatar');
+      client.publish();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: SettingsPage(controller: controller)),
+        ),
+      );
+      await tester.pump();
+
+      expect(client.thumbnailRequests, 1);
+      await tester.tap(find.byKey(const Key('open-own-profile-picture')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(client.originalRequests, 1);
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(
+        find.byKey(const Key('download-own-profile-picture')),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 final class _AccountClient
     implements MatrixClientPort, MatrixAccountManagementPort {
+  Uri? avatarUri;
+  int thumbnailRequests = 0;
+  int originalRequests = 0;
+  final StreamController<MatrixClientSnapshot> _snapshotController =
+      StreamController.broadcast(sync: true);
+
+  void publish() => _snapshotController.add(current);
+  void disposeStream() => _snapshotController.close();
+
   @override
   MatrixClientSnapshot get current => MatrixClientSnapshot(
     phase: MatrixConnectionPhase.ready,
@@ -91,6 +129,7 @@ final class _AccountClient
       displayName: 'Alice',
       homeserver: Uri.parse('https://example.org'),
       deviceId: 'CURRENT',
+      avatarMediaUri: avatarUri,
     ),
   );
 
@@ -100,7 +139,23 @@ final class _AccountClient
   final List<String?> removalAttempts = [];
 
   @override
-  Stream<MatrixClientSnapshot> get snapshots => const Stream.empty();
+  Future<Uint8List> downloadMediaThumbnail(
+    Uri mxcUri, {
+    int width = 96,
+    int height = 96,
+  }) async {
+    thumbnailRequests++;
+    return _onePixelPng;
+  }
+
+  @override
+  Future<Uint8List> downloadMedia(Uri mxcUri) async {
+    originalRequests++;
+    return _onePixelPng;
+  }
+
+  @override
+  Stream<MatrixClientSnapshot> get snapshots => _snapshotController.stream;
 
   @override
   Stream<MatrixVerificationPort> get verificationRequests =>
@@ -155,3 +210,73 @@ final class _AccountClient
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+final Uint8List _onePixelPng = Uint8List.fromList(const [
+  137,
+  80,
+  78,
+  71,
+  13,
+  10,
+  26,
+  10,
+  0,
+  0,
+  0,
+  13,
+  73,
+  72,
+  68,
+  82,
+  0,
+  0,
+  0,
+  1,
+  0,
+  0,
+  0,
+  1,
+  8,
+  6,
+  0,
+  0,
+  0,
+  31,
+  21,
+  196,
+  137,
+  0,
+  0,
+  0,
+  11,
+  73,
+  68,
+  65,
+  84,
+  120,
+  156,
+  99,
+  0,
+  1,
+  0,
+  0,
+  5,
+  0,
+  1,
+  162,
+  200,
+  84,
+  165,
+  0,
+  0,
+  0,
+  0,
+  73,
+  69,
+  78,
+  68,
+  174,
+  66,
+  96,
+  130,
+]);

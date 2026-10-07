@@ -269,6 +269,7 @@ final class MatrixAccount {
     required this.homeserver,
     this.deviceId,
     this.avatarUrl,
+    this.avatarMediaUri,
   });
 
   final String userId;
@@ -276,6 +277,7 @@ final class MatrixAccount {
   final Uri homeserver;
   final String? deviceId;
   final Uri? avatarUrl;
+  final Uri? avatarMediaUri;
 }
 
 final class MatrixRoom {

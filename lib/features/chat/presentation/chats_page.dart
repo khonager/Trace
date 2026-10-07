@@ -13,15 +13,16 @@ import 'package:trace/features/chat/application/composer_actions.dart';
 import 'package:trace/features/chat/application/configured_media_search_client.dart';
 import 'package:trace/features/chat/application/media_favorites.dart';
 import 'package:trace/features/chat/application/media_search.dart';
+import 'package:trace/features/settings/application/appearance_settings.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const double _overviewHeaderHeight = 132;
 const double _conversationRowHeight = 92;
 const double _chatRailWidth = 48;
 const double _chatAvatarRightInset = 16;
-const double _chatPeekWidth = 28;
 const double _desktopSplitBreakpoint = 900;
 const String _peopleContextId = 'trace:people';
+const String _groupsContextId = 'trace:groups';
 const List<String> _commonReactions = [
   '👍',
   '❤️',
@@ -940,6 +941,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final availableSpaceIds = _availableSpaces.map((space) => space.id).toSet();
     if (_selectedContextId != null &&
         _selectedContextId != _peopleContextId &&
+        _selectedContextId != _groupsContextId &&
         !availableSpaceIds.contains(_selectedContextId)) {
       _selectedContextId = null;
     }
@@ -950,6 +952,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final updated = <_Conversation>[];
     final visibleRooms = _selectedContextId == _peopleContextId
         ? matrixDirectChatRooms(rooms)
+        : _selectedContextId == _groupsContextId
+        ? matrixChatRoomsForSpace(
+            rooms,
+          ).where((room) => !room.isDirect).toList()
         : matrixChatRoomsForSpace(rooms, spaceId: _selectedContextId);
     for (final room in visibleRooms) {
       final existing = oldById[room.id];
@@ -1025,6 +1031,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         _conversations = contextId == _peopleContextId
             ? conversations
                   .where((conversation) => conversation.isDirect)
+                  .toList(growable: true)
+            : contextId == _groupsContextId
+            ? conversations
+                  .where((conversation) => !conversation.isDirect)
                   .toList(growable: true)
             : conversations;
         _activeConversation = 0;
@@ -1383,6 +1393,14 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    if (_selectedContextId == _groupsContextId &&
+        !(AppearanceScope.maybeOf(context)?.separateGroups ?? false)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selectedContextId == _groupsContextId) {
+          _selectContext(null);
+        }
+      });
+    }
     if (_conversations.isEmpty) {
       if (_selectedContextId != null) {
         return _ChatOverview(
@@ -1416,8 +1434,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           return _buildDesktopWorkspace(context, width);
         }
 
-        final initialWorkspaceLeft = width - _chatPeekWidth;
-        final overviewCardWidth = width - _chatPeekWidth;
+        final peekWidth = AppearanceScope.maybeOf(context)?.chatPeekWidth ?? 28;
+        final initialWorkspaceLeft = width - peekWidth;
+        final overviewCardWidth = width - peekWidth;
 
         return GestureDetector(
           key: const Key('chat-workspace'),
@@ -1711,6 +1730,16 @@ class _ChatOverview extends StatelessWidget {
                           onTap: () => onContextChanged(_peopleContextId),
                           label: 'People',
                         ),
+                        if (AppearanceScope.maybeOf(context)?.separateGroups ??
+                            false) ...[
+                          const SizedBox(width: 20),
+                          _ChatContextTab(
+                            key: const Key('groups-chats-context'),
+                            selected: selectedContextId == _groupsContextId,
+                            onTap: () => onContextChanged(_groupsContextId),
+                            label: 'Groups',
+                          ),
+                        ],
                         for (final space in spaces) ...[
                           const SizedBox(width: 20),
                           _ChatContextTab(
@@ -1735,6 +1764,8 @@ class _ChatOverview extends StatelessWidget {
                       child: Text(
                         selectedContextId == _peopleContextId
                             ? 'No direct chats with people yet.'
+                            : selectedContextId == _groupsContextId
+                            ? 'No group chats yet.'
                             : 'No chats in this space yet.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -2726,7 +2757,11 @@ class _ConversationBackground extends StatelessWidget {
     final profileAsset = conversation.profileAsset;
     final profileUrl = conversation.profileUrl;
     final profileMediaUri = conversation.profileMediaUri;
-    if (profileAsset == null && profileMediaUri == null && profileUrl == null) {
+    final appearance = AppearanceScope.maybeOf(context);
+    if (appearance?.useProfileBackground == false ||
+        (profileAsset == null &&
+            profileMediaUri == null &&
+            profileUrl == null)) {
       return ColoredBox(
         key: Key('conversation-background-${conversation.id}'),
         color: Theme.of(context).colorScheme.surface,
@@ -2766,8 +2801,8 @@ class _ConversationBackground extends StatelessWidget {
                       opacity: 0.88,
                       child: ImageFiltered(
                         imageFilter: ui.ImageFilter.blur(
-                          sigmaX: 48,
-                          sigmaY: 48,
+                          sigmaX: appearance?.backgroundBlur ?? 48,
+                          sigmaY: appearance?.backgroundBlur ?? 48,
                           tileMode: ui.TileMode.clamp,
                         ),
                         child: Transform.scale(
@@ -3588,9 +3623,11 @@ class _ImageAttachment extends StatelessWidget {
               ? width! / height!
               : 4 / 3;
           final aspectRatio = rawAspectRatio.clamp(.2, 5.0);
-          var previewWidth = isSticker ? 144.0 : 272.0;
+          final stickerSize =
+              AppearanceScope.maybeOf(context)?.stickerSize ?? 144;
+          var previewWidth = isSticker ? stickerSize : 272.0;
           var previewHeight = previewWidth / aspectRatio;
-          final maxHeight = isSticker ? 144.0 : 300.0;
+          final maxHeight = isSticker ? stickerSize : 300.0;
           if (previewHeight > maxHeight) {
             previewHeight = maxHeight;
             previewWidth = previewHeight * aspectRatio;
@@ -3629,8 +3666,12 @@ class _ImageAttachment extends StatelessWidget {
           return _AttachmentError(foreground: foreground, onRetry: onRetry);
         }
         return SizedBox(
-          width: isSticker ? 144 : 272,
-          height: isSticker ? 144 : 160,
+          width: isSticker
+              ? AppearanceScope.maybeOf(context)?.stickerSize ?? 144
+              : 272,
+          height: isSticker
+              ? AppearanceScope.maybeOf(context)?.stickerSize ?? 144
+              : 160,
           child: const Center(child: CircularProgressIndicator()),
         );
       },

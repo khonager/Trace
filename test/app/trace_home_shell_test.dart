@@ -4,11 +4,34 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace/app/trace_app.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
+import 'package:trace/features/settings/application/appearance_settings.dart';
 
 void main() {
+  testWidgets('separate groups shows a groups-only chat tab', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final appearance = AppearanceSettings();
+    await appearance.setSeparateGroups(true);
+    addTearDown(appearance.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppearanceScope(settings: appearance, child: const ChatsPage()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('groups-chats-context')));
+    await tester.pumpAndSettle();
+    expect(find.text('Family'), findsWidgets);
+    expect(find.text('Book Club'), findsWidgets);
+    expect(find.text('Maya'), findsNothing);
+    expect(find.text('Kai'), findsNothing);
+  });
+
   testWidgets('desktop shows both panes and lets the chat list collapse', (
     tester,
   ) async {

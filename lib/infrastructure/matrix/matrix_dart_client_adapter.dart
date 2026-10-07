@@ -594,6 +594,7 @@ final class MatrixDartClientAdapter
       homeserver: homeserver,
       deviceId: _client.deviceID,
       avatarUrl: _mediaUrl(profile.avatarUrl, width: 192, height: 192),
+      avatarMediaUri: profile.avatarUrl,
     );
   }
 
