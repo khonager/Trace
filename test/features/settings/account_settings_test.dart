@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/settings/application/appearance_settings.dart';
+import 'package:trace/features/settings/application/profile_image_store.dart';
 import 'package:trace/features/settings/presentation/settings_page.dart';
 
 void main() {
@@ -31,7 +36,12 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: SettingsPage(controller: controller)),
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            profileImageStore: const _TestProfileImageStore(),
+          ),
+        ),
       ),
     );
 
@@ -108,6 +118,83 @@ void main() {
       );
     },
   );
+
+  testWidgets('appearance sliders and switches update on the current page', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final appearance = AppearanceSettings();
+    addTearDown(() async {
+      await appearance.flush();
+      appearance.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(controller: controller, appearance: appearance),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('appearance-settings')));
+    await tester.pumpAndSettle();
+
+    final stickerSlider = find.descendant(
+      of: find.byKey(const Key('sticker-size-slider')),
+      matching: find.byType(Slider),
+    );
+    expect(tester.widget<Slider>(stickerSlider).value, 144);
+    await tester.drag(stickerSlider, const Offset(90, 0));
+    await tester.pump();
+    expect(tester.widget<Slider>(stickerSlider).value, greaterThan(144));
+    expect(find.text('${appearance.stickerSize.round()} px'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('profile-background-switch')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const Key('profile-background-switch')),
+          )
+          .value,
+      isFalse,
+    );
+    expect(find.byKey(const Key('background-blur-slider')), findsNothing);
+
+    await tester.ensureVisible(find.text('Restore Trace defaults'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restore Trace defaults'));
+    await tester.pump();
+    expect(tester.widget<Slider>(stickerSlider).value, 144);
+    expect(find.byKey(const Key('background-blur-slider')), findsOneWidget);
+  });
+
+  testWidgets('profile crop preview repaints during a drag', (tester) async {
+    client.avatarUri = Uri.parse('mxc://example.org/avatar');
+    client.pictureBytes = (await tester.runAsync(_twoColorImage))!;
+    client.publish();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsPage(controller: controller)),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pumpAndSettle();
+
+    final preview = find.byKey(const Key('profile-crop-preview'));
+    expect(preview, findsOneWidget);
+    final before = await _previewCenterColor(tester, preview);
+    final horizontalSlider = find
+        .ancestor(of: find.text('Left / right'), matching: find.byType(Row))
+        .first;
+    final slider = find.descendant(
+      of: horizontalSlider,
+      matching: find.byType(Slider),
+    );
+    await tester.drag(slider, const Offset(100, 0));
+    await tester.pump();
+    final after = await _previewCenterColor(tester, preview);
+    expect(after, isNot(before));
+  });
 }
 
 final class _AccountClient
@@ -115,6 +202,7 @@ final class _AccountClient
   Uri? avatarUri;
   int thumbnailRequests = 0;
   int originalRequests = 0;
+  Uint8List pictureBytes = _onePixelPng;
   final StreamController<MatrixClientSnapshot> _snapshotController =
       StreamController.broadcast(sync: true);
 
@@ -145,13 +233,13 @@ final class _AccountClient
     int height = 96,
   }) async {
     thumbnailRequests++;
-    return _onePixelPng;
+    return pictureBytes;
   }
 
   @override
   Future<Uint8List> downloadMedia(Uri mxcUri) async {
     originalRequests++;
-    return _onePixelPng;
+    return pictureBytes;
   }
 
   @override
@@ -280,3 +368,42 @@ final Uint8List _onePixelPng = Uint8List.fromList(const [
   96,
   130,
 ]);
+
+Future<Uint8List> _twoColorImage() async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRect(
+    const Rect.fromLTWH(0, 0, 100, 100),
+    Paint()..color = Colors.red,
+  );
+  canvas.drawRect(
+    const Rect.fromLTWH(100, 0, 100, 100),
+    Paint()..color = Colors.blue,
+  );
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(200, 100);
+  try {
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return data!.buffer.asUint8List();
+  } finally {
+    image.dispose();
+    picture.dispose();
+  }
+}
+
+Future<List<int>> _previewCenterColor(
+  WidgetTester tester,
+  Finder finder,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(finder);
+  return (await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 1);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final offset = ((image.height ~/ 2) * image.width + image.width ~/ 2) * 4;
+      return data!.buffer.asUint8List().sublist(offset, offset + 4);
+    } finally {
+      image.dispose();
+    }
+  }))!;
+}

@@ -54,34 +54,69 @@ Future<Uint8List> cropProfileImage(
   final frame = await codec.getNextFrame();
   final image = frame.image;
   try {
-    final side =
-        (image.width < image.height ? image.width : image.height) /
-        zoom.clamp(1.0, 4.0);
-    final left = (image.width - side) * ((horizontal.clamp(-1.0, 1.0) + 1) / 2);
-    final top = (image.height - side) * ((vertical.clamp(-1.0, 1.0) + 1) / 2);
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    canvas.drawImageRect(
+    return await cropProfileImageFromDecoded(
       image,
-      Rect.fromLTWH(left, top, side, side),
-      Rect.fromLTWH(0, 0, outputSize.toDouble(), outputSize.toDouble()),
-      Paint()..filterQuality = FilterQuality.high,
+      zoom: zoom,
+      horizontal: horizontal,
+      vertical: vertical,
+      outputSize: outputSize,
     );
-    final picture = recorder.endRecording();
-    try {
-      final output = await picture.toImage(outputSize, outputSize);
-      try {
-        final data = await output.toByteData(format: ui.ImageByteFormat.png);
-        if (data == null) throw StateError('Could not encode profile picture.');
-        return data.buffer.asUint8List();
-      } finally {
-        output.dispose();
-      }
-    } finally {
-      picture.dispose();
-    }
   } finally {
     image.dispose();
     codec.dispose();
+  }
+}
+
+Rect profileCropRect(
+  Size imageSize, {
+  required double zoom,
+  required double horizontal,
+  required double vertical,
+}) {
+  final side =
+      (imageSize.width < imageSize.height
+          ? imageSize.width
+          : imageSize.height) /
+      zoom.clamp(1.0, 4.0);
+  final left =
+      (imageSize.width - side) * ((horizontal.clamp(-1.0, 1.0) + 1) / 2);
+  final top = (imageSize.height - side) * ((vertical.clamp(-1.0, 1.0) + 1) / 2);
+  return Rect.fromLTWH(left, top, side, side);
+}
+
+/// Renders from an already decoded image so saving does not decode it again.
+Future<Uint8List> cropProfileImageFromDecoded(
+  ui.Image image, {
+  required double zoom,
+  required double horizontal,
+  required double vertical,
+  int outputSize = 512,
+}) async {
+  final sourceRect = profileCropRect(
+    Size(image.width.toDouble(), image.height.toDouble()),
+    zoom: zoom,
+    horizontal: horizontal,
+    vertical: vertical,
+  );
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawImageRect(
+    image,
+    sourceRect,
+    Rect.fromLTWH(0, 0, outputSize.toDouble(), outputSize.toDouble()),
+    Paint()..filterQuality = FilterQuality.high,
+  );
+  final picture = recorder.endRecording();
+  try {
+    final output = await picture.toImage(outputSize, outputSize);
+    try {
+      final data = await output.toByteData(format: ui.ImageByteFormat.png);
+      if (data == null) throw StateError('Could not encode profile picture.');
+      return data.buffer.asUint8List();
+    } finally {
+      output.dispose();
+    }
+  } finally {
+    picture.dispose();
   }
 }

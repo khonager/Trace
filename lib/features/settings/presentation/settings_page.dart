@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,10 +11,16 @@ import 'package:trace/features/settings/application/profile_crop.dart';
 import 'package:trace/features/settings/application/profile_image_store.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, this.controller, this.appearance});
+  const SettingsPage({
+    super.key,
+    this.controller,
+    this.appearance,
+    this.profileImageStore = const ProfileImageStore(),
+  });
 
   final MatrixSessionController? controller;
   final AppearanceSettings? appearance;
+  final ProfileImageStore profileImageStore;
 
   @override
   Widget build(BuildContext context) {
@@ -280,7 +289,11 @@ class SettingsPage extends StatelessWidget {
     final result = await showDialog<_ProfileEditResult>(
       context: context,
       builder: (context) =>
-          _ProfileEditDialog(account: account, client: controller!.client),
+          _ProfileEditDialog(
+            account: account,
+            client: controller!.client,
+            imageStore: profileImageStore,
+          ),
     );
     if (result == null || !context.mounted) return;
     try {
@@ -299,9 +312,9 @@ class SettingsPage extends StatelessWidget {
     try {
       final key = '${account.homeserver}|${account.userId}';
       if (result.removeAvatar) {
-        await const ProfileImageStore().delete(key);
+        await profileImageStore.delete(key);
       } else if (result.source != null) {
-        await const ProfileImageStore().write(
+        await profileImageStore.write(
           key,
           controller!.client.current.account?.avatarMediaUri,
           result.source!,
@@ -486,10 +499,15 @@ class SettingsPage extends StatelessWidget {
 }
 
 class _ProfileEditDialog extends StatefulWidget {
-  const _ProfileEditDialog({required this.account, required this.client});
+  const _ProfileEditDialog({
+    required this.account,
+    required this.client,
+    required this.imageStore,
+  });
 
   final MatrixAccount account;
   final MatrixClientPort client;
+  final ProfileImageStore imageStore;
 
   @override
   State<_ProfileEditDialog> createState() => _ProfileEditDialogState();
@@ -679,66 +697,75 @@ class _AppearanceCard extends StatelessWidget {
   final AppearanceSettings settings;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: ExpansionTile(
-      key: const Key('appearance-settings'),
-      leading: const Icon(Icons.palette_outlined),
-      title: const Text('Appearance'),
-      subtitle: const Text('Shape the chat view on this device'),
-      children: [
-        _AppearanceSlider(
-          label: 'Sticker size',
-          value: settings.stickerSize,
-          min: 64,
-          max: 256,
-          valueLabel: '${settings.stickerSize.round()} px',
-          onChanged: (value) => settings.setStickerSize(value),
-        ),
-        _AppearanceSlider(
-          label: 'Chat edge preview',
-          value: settings.chatPeekWidth,
-          min: 0,
-          max: 72,
-          valueLabel: settings.chatPeekWidth == 0
-              ? 'Off'
-              : '${settings.chatPeekWidth.round()} px',
-          onChanged: (value) => settings.setChatPeekWidth(value),
-        ),
-        SwitchListTile(
-          title: const Text('Separate direct chats and groups'),
-          subtitle: const Text('Show groups in their own tab'),
-          value: settings.separateGroups,
-          onChanged: settings.setSeparateGroups,
-        ),
-        SwitchListTile(
-          title: const Text('Use chat pictures as backgrounds'),
-          value: settings.useProfileBackground,
-          onChanged: settings.setUseProfileBackground,
-        ),
-        if (settings.useProfileBackground)
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: settings,
+    builder: (context, _) => Card(
+      child: ExpansionTile(
+        key: const Key('appearance-settings'),
+        leading: const Icon(Icons.palette_outlined),
+        title: const Text('Appearance'),
+        subtitle: const Text('Shape the chat view on this device'),
+        children: [
           _AppearanceSlider(
-            label: 'Background blur',
-            value: settings.backgroundBlur,
+            key: const Key('sticker-size-slider'),
+            label: 'Sticker size',
+            value: settings.stickerSize,
+            min: 64,
+            max: 256,
+            valueLabel: '${settings.stickerSize.round()} px',
+            onChanged: (value) => settings.setStickerSize(value),
+          ),
+          _AppearanceSlider(
+            key: const Key('chat-edge-preview-slider'),
+            label: 'Chat edge preview',
+            value: settings.chatPeekWidth,
             min: 0,
-            max: 80,
-            valueLabel: '${settings.backgroundBlur.round()}',
-            onChanged: settings.setBackgroundBlur,
+            max: 72,
+            valueLabel: settings.chatPeekWidth == 0
+                ? 'Off'
+                : '${settings.chatPeekWidth.round()} px',
+            onChanged: (value) => settings.setChatPeekWidth(value),
           ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: settings.reset,
-            icon: const Icon(Icons.restart_alt),
-            label: const Text('Restore Trace defaults'),
+          SwitchListTile(
+            key: const Key('separate-groups-switch'),
+            title: const Text('Separate direct chats and groups'),
+            subtitle: const Text('Show groups in their own tab'),
+            value: settings.separateGroups,
+            onChanged: settings.setSeparateGroups,
           ),
-        ),
-      ],
+          SwitchListTile(
+            key: const Key('profile-background-switch'),
+            title: const Text('Use chat pictures as backgrounds'),
+            value: settings.useProfileBackground,
+            onChanged: settings.setUseProfileBackground,
+          ),
+          if (settings.useProfileBackground)
+            _AppearanceSlider(
+              key: const Key('background-blur-slider'),
+              label: 'Background blur',
+              value: settings.backgroundBlur,
+              min: 0,
+              max: 80,
+              valueLabel: '${settings.backgroundBlur.round()}',
+              onChanged: settings.setBackgroundBlur,
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: settings.reset,
+              icon: const Icon(Icons.restart_alt),
+              label: const Text('Restore Trace defaults'),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
 
 class _AppearanceSlider extends StatelessWidget {
   const _AppearanceSlider({
+    super.key,
     required this.label,
     required this.value,
     required this.min,
@@ -775,7 +802,8 @@ class _AppearanceSlider extends StatelessWidget {
 class _ProfileEditDialogState extends State<_ProfileEditDialog> {
   late final TextEditingController _nameController;
   Uint8List? _sourceBytes;
-  Future<Uint8List>? _preview;
+  ui.Image? _previewImage;
+  int _decodeGeneration = 0;
   bool _pictureChanged = false;
   bool _loadingSource = false;
   bool _saving = false;
@@ -798,18 +826,17 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     setState(() => _loadingSource = true);
     try {
       final key = '${widget.account.homeserver}|${widget.account.userId}';
-      final stored = await const ProfileImageStore().read(key, uri);
+      ProfileImageSource? stored;
+      try {
+        stored = await widget.imageStore.read(key, uri);
+      } catch (_) {
+        // The Matrix copy is still usable if local support storage fails.
+      }
       final source =
           stored ??
           ProfileImageSource(bytes: await widget.client.downloadMedia(uri));
       if (mounted && !_pictureChanged) {
-        setState(() {
-          _sourceBytes = source.bytes;
-          _zoom = source.zoom;
-          _horizontal = source.horizontal;
-          _vertical = source.vertical;
-          _updatePreview();
-        });
+        _setSource(source, changed: false);
       }
     } catch (_) {
       // A name change and choosing a replacement picture remain available.
@@ -820,6 +847,8 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
 
   @override
   void dispose() {
+    _decodeGeneration++;
+    _previewImage?.dispose();
     _nameController.dispose();
     super.dispose();
   }
@@ -837,22 +866,13 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       return;
     }
     if (!mounted) return;
-    setState(() {
-      _sourceBytes = source;
-      _pictureChanged = true;
-      _zoom = 1;
-      _horizontal = 0;
-      _vertical = 0;
-      _updatePreview();
-      _removeAvatar = false;
-      _error = null;
-    });
+    _setSource(ProfileImageSource(bytes: source), changed: true);
   }
 
   void _removePicture() {
+    _clearDecodedImage();
     setState(() {
       _sourceBytes = null;
-      _preview = null;
       _pictureChanged = true;
       _removeAvatar = true;
       _error = null;
@@ -864,12 +884,19 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     try {
       final source = _sourceBytes;
       final cropped = _pictureChanged && !_removeAvatar && source != null
-          ? await cropProfileImage(
-              source,
-              zoom: _zoom,
-              horizontal: _horizontal,
-              vertical: _vertical,
-            )
+          ? _previewImage == null
+                ? await cropProfileImage(
+                    source,
+                    zoom: _zoom,
+                    horizontal: _horizontal,
+                    vertical: _vertical,
+                  )
+                : await cropProfileImageFromDecoded(
+                    _previewImage!,
+                    zoom: _zoom,
+                    horizontal: _horizontal,
+                    vertical: _vertical,
+                  )
           : null;
       if (!mounted) return;
       Navigator.pop(
@@ -913,16 +940,22 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (_sourceBytes != null)
-              FutureBuilder<Uint8List>(
-                future: _preview,
-                builder: (context, snapshot) => CircleAvatar(
-                  radius: 60,
-                  backgroundImage: snapshot.hasData
-                      ? MemoryImage(snapshot.data!)
-                      : null,
-                  child: snapshot.hasData
-                      ? null
-                      : const Icon(Icons.image_outlined),
+              RepaintBoundary(
+                key: const Key('profile-crop-preview'),
+                child: SizedBox.square(
+                  dimension: 120,
+                  child: ClipOval(
+                    child: _previewImage == null
+                        ? const Center(child: CircularProgressIndicator())
+                        : CustomPaint(
+                            painter: _ProfileCropPainter(
+                              image: _previewImage!,
+                              zoom: _zoom,
+                              horizontal: _horizontal,
+                              vertical: _vertical,
+                            ),
+                          ),
+                  ),
                 ),
               )
             else
@@ -1027,24 +1060,86 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
           onChanged: (next) => setState(() {
             update(next);
             _pictureChanged = true;
-            _updatePreview();
           }),
         ),
       ),
     ],
   );
 
-  void _updatePreview() {
-    final source = _sourceBytes;
-    if (source == null) return;
-    _preview = cropProfileImage(
+  void _setSource(ProfileImageSource source, {required bool changed}) {
+    _clearDecodedImage();
+    setState(() {
+      _sourceBytes = source.bytes;
+      _zoom = source.zoom;
+      _horizontal = source.horizontal;
+      _vertical = source.vertical;
+      _pictureChanged = changed;
+      _removeAvatar = false;
+      _error = null;
+    });
+    unawaited(_decodePreview(source.bytes));
+  }
+
+  void _clearDecodedImage() {
+    _decodeGeneration++;
+    _previewImage?.dispose();
+    _previewImage = null;
+  }
+
+  Future<void> _decodePreview(Uint8List bytes) async {
+    final generation = ++_decodeGeneration;
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final image = (await codec.getNextFrame()).image;
+      codec.dispose();
+      if (!mounted || generation != _decodeGeneration) {
+        image.dispose();
+        return;
+      }
+      setState(() => _previewImage = image);
+    } catch (_) {
+      if (mounted && generation == _decodeGeneration) {
+        setState(() => _error = 'Could not display this picture.');
+      }
+    }
+  }
+}
+
+class _ProfileCropPainter extends CustomPainter {
+  const _ProfileCropPainter({
+    required this.image,
+    required this.zoom,
+    required this.horizontal,
+    required this.vertical,
+  });
+
+  final ui.Image image;
+  final double zoom;
+  final double horizontal;
+  final double vertical;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final source = profileCropRect(
+      Size(image.width.toDouble(), image.height.toDouble()),
+      zoom: zoom,
+      horizontal: horizontal,
+      vertical: vertical,
+    );
+    canvas.drawImageRect(
+      image,
       source,
-      zoom: _zoom,
-      horizontal: _horizontal,
-      vertical: _vertical,
-      outputSize: 160,
+      Offset.zero & size,
+      Paint()..filterQuality = FilterQuality.high,
     );
   }
+
+  @override
+  bool shouldRepaint(_ProfileCropPainter oldDelegate) =>
+      image != oldDelegate.image ||
+      zoom != oldDelegate.zoom ||
+      horizontal != oldDelegate.horizontal ||
+      vertical != oldDelegate.vertical;
 }
 
 class _SecretDialog extends StatefulWidget {

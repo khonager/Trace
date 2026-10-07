@@ -14,7 +14,7 @@ void main() {
   testWidgets('separate groups shows a groups-only chat tab', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final appearance = AppearanceSettings();
-    await appearance.setSeparateGroups(true);
+    appearance.setSeparateGroups(true);
     addTearDown(appearance.dispose);
     await tester.pumpWidget(
       MaterialApp(

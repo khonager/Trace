@@ -15,11 +15,12 @@ void main() {
       expect(first.chatPeekWidth, 28);
       expect(first.useProfileBackground, isTrue);
 
-      await first.setStickerSize(192);
-      await first.setChatPeekWidth(0);
-      await first.setSeparateGroups(true);
-      await first.setUseProfileBackground(false);
-      await first.setBackgroundBlur(12);
+      first.setStickerSize(192);
+      first.setChatPeekWidth(0);
+      first.setSeparateGroups(true);
+      first.setUseProfileBackground(false);
+      first.setBackgroundBlur(12);
+      await first.flush();
 
       final second = AppearanceSettings();
       await second.load();
