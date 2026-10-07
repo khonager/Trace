@@ -76,6 +76,9 @@ _readStoredSource(String key) async {
             rotation: (metadata['rotation'] as num?)?.toDouble() ?? 0,
             flipHorizontal: metadata['flipHorizontal'] == true,
             flipVertical: metadata['flipVertical'] == true,
+            blurBackground: metadata['blurBackground'] is bool
+                ? metadata['blurBackground'] as bool
+                : null,
           ),
         ),
         metadata: metadata,
@@ -125,6 +128,7 @@ Future<void> writeProfileSource(
       'rotation': source.transform.rotation,
       'flipHorizontal': source.transform.flipHorizontal,
       'flipVertical': source.transform.flipVertical,
+      'blurBackground': source.transform.blurBackground,
     }),
     flush: true,
   );

@@ -49,6 +49,56 @@ void main() {
   });
 
   test(
+    'background control is needed only for exposed or transparent areas',
+    () {
+      const image = Size(200, 100);
+      expect(
+        profileImageNeedsBackground(image, const ProfileImageTransform()),
+        isFalse,
+      );
+      expect(
+        profileImageNeedsBackground(
+          image,
+          const ProfileImageTransform(scale: .8),
+        ),
+        isTrue,
+      );
+      expect(
+        profileImageNeedsBackground(
+          image,
+          const ProfileImageTransform(rotation: math.pi / 4),
+        ),
+        isTrue,
+      );
+      expect(
+        profileImageNeedsBackground(
+          image,
+          const ProfileImageTransform(),
+          hasTransparency: true,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('a PNG can leave edges transparent or fill them with blur', () async {
+    final source = await _twoColorSource();
+    expect(isPngProfileImage(source), isTrue);
+    final transparent = await renderProfileImage(
+      source,
+      transform: const ProfileImageTransform(scale: .25, blurBackground: false),
+      outputSize: 40,
+    );
+    final blurred = await renderProfileImage(
+      source,
+      transform: const ProfileImageTransform(scale: .25, blurBackground: true),
+      outputSize: 40,
+    );
+    expect((await _pixelAt(transparent, 0, 0))[3], 0);
+    expect((await _pixelAt(blurred, 0, 0))[3], 255);
+  });
+
+  test(
     'zoomed-out and flipped output remains filled with image color',
     () async {
       final source = await _twoColorSource();

@@ -38,11 +38,14 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
   Offset _startFocalPoint = Offset.zero;
   bool _circlePreview = true;
   bool _saving = false;
+  bool _hasTransparency = false;
+  late final bool _defaultBlurBackground;
 
   @override
   void initState() {
     super.initState();
     _transform = widget.initialTransform;
+    _defaultBlurBackground = !isPngProfileImage(widget.source);
     _decode();
   }
 
@@ -55,11 +58,25 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
       } finally {
         codec.dispose();
       }
+      var hasTransparency = false;
+      try {
+        hasTransparency = await profileImageHasTransparency(image);
+      } catch (_) {
+        hasTransparency = isPngProfileImage(widget.source);
+      }
       if (!mounted) {
         image.dispose();
         return;
       }
-      setState(() => _image = image);
+      setState(() {
+        _image = image;
+        _hasTransparency = hasTransparency;
+        if (_transform.blurBackground == null) {
+          _transform = _transform.copyWith(
+            blurBackground: _defaultBlurBackground && !hasTransparency,
+          );
+        }
+      });
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not open this picture.');
     }
@@ -91,6 +108,16 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
 
   void _change(ProfileImageTransform Function(ProfileImageTransform) change) {
     setState(() => _transform = change(_transform));
+  }
+
+  bool get _needsBackground {
+    final image = _image;
+    return image != null &&
+        profileImageNeedsBackground(
+          Size(image.width.toDouble(), image.height.toDouble()),
+          _transform,
+          hasTransparency: _hasTransparency,
+        );
   }
 
   Future<void> _savePicture() async {
@@ -126,43 +153,55 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Cancel picture editing',
-                  color: Colors.white,
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
+            child: LayoutBuilder(
+              builder: (context, constraints) => SizedBox(
+                height: 48,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Cancel picture editing',
+                          color: Colors.white,
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          constraints.maxWidth < 500
+                              ? 'Picture'
+                              : 'Edit profile picture',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      key: const Key('profile-preview-shape-toggle'),
+                      tooltip: _circlePreview
+                          ? 'Show square preview'
+                          : 'Show circular preview',
+                      onPressed: () =>
+                          setState(() => _circlePreview = !_circlePreview),
+                      icon: AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white, width: 2),
+                          borderRadius: BorderRadius.circular(
+                            _circlePreview ? 9 : 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const Expanded(
-                  child: Text(
-                    'Edit profile picture',
-                    style: TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-          ToggleButtons(
-            isSelected: [_circlePreview, !_circlePreview],
-            color: Colors.white70,
-            selectedColor: Colors.white,
-            fillColor: const Color(0xFF3A3D45),
-            borderColor: Colors.white38,
-            selectedBorderColor: Colors.white70,
-            onPressed: (index) => setState(() => _circlePreview = index == 0),
-            children: const [
-              Padding(
-                key: Key('profile-preview-circle'),
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text('Circle'),
-              ),
-              Padding(
-                key: Key('profile-preview-square'),
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text('Square'),
-              ),
-            ],
           ),
           Expanded(
             child: LayoutBuilder(
@@ -180,9 +219,18 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
                       onScaleUpdate: _image == null
                           ? null
                           : (details) => _updateGesture(details, side),
-                      child: _circlePreview
-                          ? ClipOval(child: _picturePreview())
-                          : ClipRect(child: _picturePreview()),
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween<double>(
+                          begin: 0,
+                          end: _circlePreview ? side / 2 : 0,
+                        ),
+                        duration: const Duration(milliseconds: 220),
+                        builder: (context, radius, child) => ClipRRect(
+                          borderRadius: BorderRadius.circular(radius),
+                          child: child,
+                        ),
+                        child: _picturePreview(),
+                      ),
                     ),
                   ),
                 );
@@ -199,6 +247,36 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
           ),
           if (_error != null && _image != null)
             Text(_error!, style: const TextStyle(color: Color(0xFFFF9F9F))),
+          SizedBox(
+            height: 48,
+            child: _needsBackground
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Flexible(
+                          child: Text(
+                            'Blur uncovered area',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Switch.adaptive(
+                          key: const Key('profile-blur-background-switch'),
+                          value: _transform.blurBackground ?? true,
+                          onChanged: (value) => _change(
+                            (current) =>
+                                current.copyWith(blurBackground: value),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : null,
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Wrap(
@@ -259,7 +337,10 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
                   'Reset picture',
                   Icons.restart_alt,
                   () => setState(
-                    () => _transform = const ProfileImageTransform(),
+                    () => _transform = ProfileImageTransform(
+                      blurBackground:
+                          _defaultBlurBackground && !_hasTransparency,
+                    ),
                   ),
                 ),
               ],
@@ -295,8 +376,17 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
               ? const CircularProgressIndicator()
               : Text(_error!, style: const TextStyle(color: Colors.white)),
         )
-      : CustomPaint(
-          painter: ProfileImagePainter(image: _image!, transform: _transform),
+      : Stack(
+          fit: StackFit.expand,
+          children: [
+            const CustomPaint(painter: _TransparencyGridPainter()),
+            CustomPaint(
+              painter: ProfileImagePainter(
+                image: _image!,
+                transform: _transform,
+              ),
+            ),
+          ],
         );
 
   Widget _tool(String label, IconData icon, VoidCallback action) => SizedBox(
@@ -319,4 +409,30 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
       ],
     ),
   );
+}
+
+class _TransparencyGridPainter extends CustomPainter {
+  const _TransparencyGridPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 16.0;
+    canvas.drawColor(const Color(0xFF393B40), BlendMode.srcOver);
+    final light = Paint()..color = const Color(0xFF50535A);
+    for (var row = 0; row * cell < size.height; row++) {
+      for (
+        var column = row.isEven ? 0 : 1;
+        column * cell < size.width;
+        column += 2
+      ) {
+        canvas.drawRect(
+          Rect.fromLTWH(column * cell, row * cell, cell, cell),
+          light,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TransparencyGridPainter oldDelegate) => false;
 }

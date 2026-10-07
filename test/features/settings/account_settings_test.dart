@@ -10,7 +10,9 @@ import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/settings/application/appearance_settings.dart';
+import 'package:trace/features/settings/application/profile_crop.dart';
 import 'package:trace/features/settings/application/profile_image_store.dart';
+import 'package:trace/features/settings/presentation/profile_picture_editor.dart';
 import 'package:trace/features/settings/presentation/settings_page.dart';
 
 void main() {
@@ -218,17 +220,22 @@ void main() {
           ?.resolve({}),
       const Color(0xFF8B68E8),
     );
-    await tester.tap(find.byKey(const Key('profile-preview-square')));
-    await tester.pump();
+    final shapeToggle = find.byKey(const Key('profile-preview-shape-toggle'));
     expect(
-      tester.widget<ToggleButtons>(find.byType(ToggleButtons)).isSelected,
-      [false, true],
+      tester.widget<IconButton>(shapeToggle).tooltip,
+      'Show square preview',
     );
-    await tester.tap(find.byKey(const Key('profile-preview-circle')));
-    await tester.pump();
+    await tester.tap(shapeToggle);
+    await tester.pumpAndSettle();
     expect(
-      tester.widget<ToggleButtons>(find.byType(ToggleButtons)).isSelected,
-      [true, false],
+      tester.widget<IconButton>(shapeToggle).tooltip,
+      'Show circular preview',
+    );
+    await tester.tap(shapeToggle);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<IconButton>(shapeToggle).tooltip,
+      'Show square preview',
     );
     await tester.drag(area, const Offset(25, 15));
     await tester.pump();
@@ -265,6 +272,111 @@ void main() {
       closeTo(math.pi / 2 + math.atan2(20, 110), .01),
     );
     expect(imageStore.written?.transform.flipHorizontal, isTrue);
+  });
+
+  testWidgets('PNG blur control appears only when the framing needs it', (
+    tester,
+  ) async {
+    client.avatarUri = Uri.parse('mxc://example.org/avatar');
+    client.pictureBytes = (await tester.runAsync(_twoColorImage))!;
+    client.publish();
+    final imageStore = _TestProfileImageStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            profileImageStore: imageStore,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('edit-profile-picture')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+
+    final blurSwitch = find.byKey(const Key('profile-blur-background-switch'));
+    final gestureArea = find.byKey(const Key('profile-picture-gesture-area'));
+    final previewSize = tester.getSize(gestureArea);
+    expect(blurSwitch, findsNothing);
+    await tester.tap(find.byTooltip('Zoom out'));
+    await tester.pump();
+    expect(blurSwitch, findsOneWidget);
+    expect(tester.getSize(gestureArea), previewSize);
+    expect(tester.widget<Switch>(blurSwitch).value, isFalse);
+    await tester.tap(blurSwitch);
+    await tester.pump();
+    expect(tester.widget<Switch>(blurSwitch).value, isTrue);
+    await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(imageStore.written?.transform.blurBackground, isTrue);
+  });
+
+  testWidgets('preview shape control respects a phone camera inset', (
+    tester,
+  ) async {
+    final source = (await tester.runAsync(_twoColorImage))!;
+    await tester.binding.setSurfaceSize(const Size(360, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(360, 760),
+            padding: EdgeInsets.only(top: 56),
+          ),
+          child: ProfilePictureEditor(
+            source: source,
+            initialTransform: const ProfileImageTransform(),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    final shapeToggle = find.byKey(const Key('profile-preview-shape-toggle'));
+    expect(tester.getTopLeft(shapeToggle).dy, greaterThanOrEqualTo(56));
+    await tester.tap(shapeToggle);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<IconButton>(shapeToggle).tooltip,
+      'Show circular preview',
+    );
+  });
+
+  testWidgets('a transparent PNG offers blur while leaving it off by default', (
+    tester,
+  ) async {
+    final source = (await tester.runAsync(_transparentPngImage))!;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfilePictureEditor(
+          source: source,
+          initialTransform: const ProfileImageTransform(),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    final blurSwitch = find.byKey(const Key('profile-blur-background-switch'));
+    expect(blurSwitch, findsOneWidget);
+    expect(tester.widget<Switch>(blurSwitch).value, isFalse);
   });
 
   testWidgets('replacing a picture opens the editor and saves it directly', (
@@ -646,6 +758,21 @@ Future<Uint8List> _twoColorImage() async {
   );
   final picture = recorder.endRecording();
   final image = await picture.toImage(200, 100);
+  try {
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return data!.buffer.asUint8List();
+  } finally {
+    image.dispose();
+    picture.dispose();
+  }
+}
+
+Future<Uint8List> _transparentPngImage() async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawCircle(const Offset(50, 50), 35, Paint()..color = Colors.red);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(100, 100);
   try {
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     return data!.buffer.asUint8List();

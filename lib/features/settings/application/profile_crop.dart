@@ -131,6 +131,7 @@ class ProfileImageTransform {
     this.rotation = 0,
     this.flipHorizontal = false,
     this.flipVertical = false,
+    this.blurBackground,
   });
 
   final double scale;
@@ -139,18 +140,24 @@ class ProfileImageTransform {
   final bool flipHorizontal;
   final bool flipVertical;
 
+  /// Null preserves the earlier blurred framing until the editor chooses a
+  /// default for the source format.
+  final bool? blurBackground;
+
   ProfileImageTransform copyWith({
     double? scale,
     Offset? offset,
     double? rotation,
     bool? flipHorizontal,
     bool? flipVertical,
+    bool? blurBackground,
   }) => ProfileImageTransform(
     scale: scale ?? this.scale,
     offset: offset ?? this.offset,
     rotation: rotation ?? this.rotation,
     flipHorizontal: flipHorizontal ?? this.flipHorizontal,
     flipVertical: flipVertical ?? this.flipVertical,
+    blurBackground: blurBackground ?? this.blurBackground,
   );
 
   static ProfileImageTransform fromLegacy(
@@ -176,6 +183,60 @@ class ProfileImageTransform {
       ),
     );
   }
+}
+
+bool isPngProfileImage(Uint8List bytes) =>
+    bytes.lengthInBytes >= 8 &&
+    bytes[0] == 137 &&
+    bytes[1] == 80 &&
+    bytes[2] == 78 &&
+    bytes[3] == 71 &&
+    bytes[4] == 13 &&
+    bytes[5] == 10 &&
+    bytes[6] == 26 &&
+    bytes[7] == 10;
+
+Future<bool> profileImageHasTransparency(ui.Image image) async {
+  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  if (data == null) throw StateError('Could not inspect profile picture.');
+  final pixels = data.buffer.asUint8List(
+    data.offsetInBytes,
+    data.lengthInBytes,
+  );
+  for (var index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] < 255) return true;
+  }
+  return false;
+}
+
+/// Whether any square corner lies outside the transformed source, or the
+/// source itself contains transparent pixels.
+bool profileImageNeedsBackground(
+  Size imageSize,
+  ProfileImageTransform transform, {
+  bool hasTransparency = false,
+}) {
+  if (hasTransparency) return true;
+  final shortest = math.min(imageSize.width, imageSize.height);
+  if (shortest <= 0 || transform.scale <= 0) return true;
+  final cosine = math.cos(transform.rotation);
+  final sine = math.sin(transform.rotation);
+  final scale = transform.scale / shortest;
+  for (final corner in const [
+    Offset(-.5, -.5),
+    Offset(.5, -.5),
+    Offset(-.5, .5),
+    Offset(.5, .5),
+  ]) {
+    final moved = corner - transform.offset;
+    final x = (moved.dx * cosine + moved.dy * sine) / scale;
+    final y = (-moved.dx * sine + moved.dy * cosine) / scale;
+    if (x.abs() > imageSize.width / 2 + .0001 ||
+        y.abs() > imageSize.height / 2 + .0001) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Keeps the point under the fingers anchored during drag, pinch, and rotate.
@@ -224,26 +285,28 @@ void paintProfileImage(
   final cover = math.max(size.width / image.width, size.height / image.height);
   canvas.save();
   canvas.clipRect(bounds);
-  canvas.drawColor(const Color(0xFF202124), BlendMode.srcOver);
-  canvas.saveLayer(
-    bounds,
-    Paint()
-      ..imageFilter = ui.ImageFilter.blur(
-        sigmaX: size.width * .06,
-        sigmaY: size.height * .06,
-        tileMode: ui.TileMode.clamp,
-      ),
-  );
-  canvas.save();
-  canvas.translate(center.dx, center.dy);
-  canvas.scale(cover * 1.3);
-  canvas.drawImage(
-    image,
-    Offset(-image.width / 2, -image.height / 2),
-    Paint()..filterQuality = FilterQuality.low,
-  );
-  canvas.restore();
-  canvas.restore();
+  if (transform.blurBackground ?? true) {
+    canvas.drawColor(const Color(0xFF202124), BlendMode.srcOver);
+    canvas.saveLayer(
+      bounds,
+      Paint()
+        ..imageFilter = ui.ImageFilter.blur(
+          sigmaX: size.width * .06,
+          sigmaY: size.height * .06,
+          tileMode: ui.TileMode.clamp,
+        ),
+    );
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.scale(cover * 1.3);
+    canvas.drawImage(
+      image,
+      Offset(-image.width / 2, -image.height / 2),
+      Paint()..filterQuality = FilterQuality.low,
+    );
+    canvas.restore();
+    canvas.restore();
+  }
 
   canvas.save();
   canvas.translate(
@@ -331,5 +394,6 @@ class ProfileImagePainter extends CustomPainter {
       transform.offset != oldDelegate.transform.offset ||
       transform.rotation != oldDelegate.transform.rotation ||
       transform.flipHorizontal != oldDelegate.transform.flipHorizontal ||
-      transform.flipVertical != oldDelegate.transform.flipVertical;
+      transform.flipVertical != oldDelegate.transform.flipVertical ||
+      transform.blurBackground != oldDelegate.transform.blurBackground;
 }

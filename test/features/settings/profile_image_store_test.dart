@@ -25,7 +25,7 @@ void main() {
       final sourceBytes = File('assets/profiles/maya.webp').readAsBytesSync();
       final source = ProfileImageSource(
         bytes: sourceBytes,
-        transform: const ProfileImageTransform(scale: 2),
+        transform: const ProfileImageTransform(scale: 2, blurBackground: false),
       );
       final store = ProfileImageStore();
       final oldUri = Uri.parse('mxc://example.org/old');
@@ -47,6 +47,10 @@ void main() {
       final recovered = await store.recover('account', newUri, uploaded);
       expect(listEquals(recovered?.bytes, sourceBytes), isTrue);
       expect((await store.read('account', newUri))?.transform.scale, 2);
+      expect(
+        (await store.read('account', newUri))?.transform.blurBackground,
+        isFalse,
+      );
       expect(await store.read('account', oldUri), isNull);
     },
   );
