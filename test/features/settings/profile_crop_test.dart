@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/features/settings/application/profile_crop.dart';
+import 'package:trace/features/settings/application/profile_image_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -99,6 +100,37 @@ void main() {
     for (var index = 0; index < 3; index++) {
       expect((oldCenter[index] - newCenter[index]).abs(), lessThan(8));
     }
+  });
+
+  test('a retained source only recovers its own uploaded avatar', () async {
+    final bytes = await _twoColorSource();
+    final source = ProfileImageSource(
+      bytes: bytes,
+      transform: const ProfileImageTransform(scale: 2, offset: Offset(.2, 0)),
+    );
+    final uploaded = await renderProfileImage(
+      bytes,
+      transform: source.transform,
+    );
+    final other = await renderProfileImage(
+      bytes,
+      transform: const ProfileImageTransform(flipHorizontal: true),
+    );
+    expect(await sourceMatchesAvatar(source, uploaded), isTrue);
+    expect(await sourceMatchesAvatar(source, other), isFalse);
+
+    final legacy = ProfileImageSource(
+      bytes: bytes,
+      legacyZoom: 2,
+      legacyHorizontal: 1,
+    );
+    final legacyUpload = await cropProfileImage(
+      bytes,
+      zoom: 2,
+      horizontal: 1,
+      vertical: 0,
+    );
+    expect(await sourceMatchesAvatar(legacy, legacyUpload), isTrue);
   });
 }
 

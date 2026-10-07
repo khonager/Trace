@@ -326,16 +326,100 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('No chooser'), findsOneWidget);
   });
+
+  testWidgets('reopening the editor keeps the uncropped source image', (
+    tester,
+  ) async {
+    final source = (await tester.runAsync(_twoColorImage))!;
+    final store = _TestProfileImageStore()..serveWritten = true;
+    client.delayAvatarSnapshot = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            profileImageStore: store,
+            pickProfilePicture: () async => ChatAttachment(
+              name: 'source.png',
+              readAsBytes: () async => source,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('replace-profile-picture')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Zoom in'));
+    await tester.tap(find.byTooltip('Zoom in'));
+    await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(store.written?.bytes, source);
+    expect(store.writtenUri, client.pendingAvatarUri);
+    expect(client.avatarUri, isNull);
+    final firstScale = store.written!.transform.scale;
+    expect(firstScale, greaterThan(1));
+
+    client.applyPendingAvatar();
+    await tester.pump();
+    final requestsBeforeReopen = client.originalRequests;
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(store.readHits, greaterThan(0));
+    expect(client.originalRequests, requestsBeforeReopen);
+    await tester.tap(find.byKey(const Key('edit-profile-picture')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Zoom out'));
+    await tester.tap(find.byTooltip('Zoom out'));
+    await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(store.written?.bytes, source);
+    expect(store.written!.transform.scale, lessThan(firstScale));
+  });
 }
 
 class _TestProfileImageStore extends ProfileImageStore {
   _TestProfileImageStore();
 
   ProfileImageSource? written;
+  Uri? writtenUri;
+  bool serveWritten = false;
+  int readHits = 0;
 
   @override
-  Future<ProfileImageSource?> read(String accountKey, Uri? avatarUri) async =>
-      null;
+  Future<ProfileImageSource?> read(String accountKey, Uri? avatarUri) async {
+    if (serveWritten && avatarUri == writtenUri && written != null) {
+      readHits++;
+      return written;
+    }
+    return null;
+  }
+
+  @override
+  Future<ProfileImageSource?> recover(
+    String accountKey,
+    Uri avatarUri,
+    Uint8List avatarBytes,
+  ) async => null;
 
   @override
   Future<void> write(
@@ -344,6 +428,7 @@ class _TestProfileImageStore extends ProfileImageStore {
     ProfileImageSource source,
   ) async {
     written = source;
+    writtenUri = avatarUri;
   }
 }
 
@@ -373,6 +458,16 @@ final class _AccountClient
 
   String? updatedDisplayName;
   Uint8List? uploadedAvatar;
+  int avatarUpdates = 0;
+  bool delayAvatarSnapshot = false;
+  Uri? pendingAvatarUri;
+
+  void applyPendingAvatar() {
+    avatarUri = pendingAvatarUri;
+    pendingAvatarUri = null;
+    publish();
+  }
+
   String? removedDeviceId;
   String? removalPassword;
   final List<String?> removalAttempts = [];
@@ -423,7 +518,7 @@ final class _AccountClient
   ];
 
   @override
-  Future<void> updateProfile({
+  Future<Uri?> updateProfile({
     required String displayName,
     Uint8List? avatarBytes,
     String? avatarName,
@@ -432,6 +527,23 @@ final class _AccountClient
   }) async {
     updatedDisplayName = displayName;
     uploadedAvatar = avatarBytes;
+    if (avatarBytes != null) {
+      final uploadedUri = Uri.parse(
+        'mxc://example.org/upload-${++avatarUpdates}',
+      );
+      pictureBytes = avatarBytes;
+      if (delayAvatarSnapshot) {
+        pendingAvatarUri = uploadedUri;
+      } else {
+        avatarUri = uploadedUri;
+        publish();
+      }
+      return uploadedUri;
+    } else if (removeAvatar) {
+      avatarUri = null;
+      publish();
+    }
+    return null;
   }
 
   @override

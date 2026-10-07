@@ -442,7 +442,7 @@ final class MatrixDartClientAdapter
   }
 
   @override
-  Future<void> updateProfile({
+  Future<Uri?> updateProfile({
     required String displayName,
     Uint8List? avatarBytes,
     String? avatarName,
@@ -458,19 +458,41 @@ final class MatrixDartClientAdapter
     await _client.setProfileField(userId, 'displayname', {
       'displayname': normalizedName,
     });
+    Uri? uploadedAvatarUri;
     if (removeAvatar) {
       await _client.setAvatar(null);
     } else if (avatarBytes != null) {
-      await _client.setAvatar(
-        matrix.MatrixFile(
-          bytes: avatarBytes,
-          name: avatarName ?? 'profile-picture',
-          mimeType: avatarMimeType ?? 'application/octet-stream',
-        ),
+      uploadedAvatarUri = await _client.uploadContent(
+        avatarBytes,
+        filename: avatarName ?? 'profile-picture',
+        contentType: avatarMimeType ?? 'application/octet-stream',
+      );
+      await _client.setProfileField(userId, 'avatar_url', {
+        'avatar_url': uploadedAvatarUri.toString(),
+      });
+    }
+    try {
+      await _refreshAccount();
+    } catch (_) {
+      // Profile writes succeeded; a delayed profile read must not discard the
+      // URI needed to retain the local source image.
+    }
+    final refreshed = _account;
+    if (refreshed != null) {
+      final avatarUri = removeAvatar
+          ? null
+          : uploadedAvatarUri ?? refreshed.avatarMediaUri;
+      _account = MatrixAccount(
+        userId: refreshed.userId,
+        displayName: normalizedName,
+        homeserver: refreshed.homeserver,
+        deviceId: refreshed.deviceId,
+        avatarUrl: _mediaUrl(avatarUri, width: 192, height: 192),
+        avatarMediaUri: avatarUri,
       );
     }
-    await _refreshAccount();
     _publish();
+    return uploadedAvatarUri;
   }
 
   @override

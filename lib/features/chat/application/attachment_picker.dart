@@ -16,7 +16,9 @@ Future<ChatAttachment?> pickChatAttachment({
 }) async {
   if (preferLinuxChooser) {
     try {
-      final fallback = await pickChatAttachmentFallback(dialogTitle: dialogTitle);
+      final fallback = await pickChatAttachmentFallback(
+        dialogTitle: dialogTitle,
+      );
       if (fallback.available) return fallback.file;
     } catch (_) {
       // Try the platform chooser if Zenity cannot start in this environment.

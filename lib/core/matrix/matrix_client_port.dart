@@ -112,7 +112,8 @@ abstract interface class MatrixClientPort {
 
 /// Account operations which may require profile uploads or re-authentication.
 abstract interface class MatrixAccountManagementPort {
-  Future<void> updateProfile({
+  /// Returns the exact media URI uploaded for a new avatar, if one was set.
+  Future<Uri?> updateProfile({
     required String displayName,
     Uint8List? avatarBytes,
     String? avatarName,

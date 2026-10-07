@@ -9,8 +9,11 @@ the intended visual design while allowing adjustments without server state.
 The full selected profile image and its framing values are stored on this
 device. Matrix receives a 512 px square render. Selections above 30 MB are
 scaled down with their full aspect ratio before local storage. The stored
-source is used only while the Matrix avatar URI still matches, so an avatar
-changed by another client cannot be accidentally restored from stale data.
+source is tagged with the exact uploaded Matrix avatar URI. Older source files
+whose URI marker is stale are recovered only when they reproduce the current
+uploaded avatar. An avatar changed by another client cannot silently reuse a
+different local source. When no matching source exists, the profile dialog explains
+that only the uploaded square is available.
 
 Controls repaint as values change; preference writes are grouped after a short
 pause in dragging. Edit picture sits beside Replace picture in the profile
@@ -18,12 +21,13 @@ dialog, while the display name waits for a deliberate tap. The picture editor
 supports drag, pinch zoom, pinch rotation, quarter-turn rotation, flips, and
 reset. Circle and Square switch between the avatar crop and the full uploaded
 image. Zooming out fills exposed edges with a blurred copy of the source.
+
 The editor preview and Matrix upload use the same painter. A prominent Save
 picture button renders the uploaded PNG before closing the editor, then commits
 the profile edit directly. On Linux, Replace picture opens the Zenity chooser
 first when available and falls back to the platform picker.
-Older locally stored framing values are converted
-when their source image is opened.
+Older locally stored framing values are converted when their source image is
+opened.
 
 ![Expanded appearance settings](settings-appearance.png)
 

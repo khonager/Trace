@@ -33,7 +33,14 @@ class SettingsPage extends StatelessWidget {
   final Future<ChatAttachment?> Function()? pickProfilePicture;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => controller == null
+      ? _buildContent(context)
+      : ListenableBuilder(
+          listenable: controller!,
+          builder: (context, _) => _buildContent(context),
+        );
+
+  Widget _buildContent(BuildContext context) {
     final account = controller?.snapshot.account;
     final appearance = this.appearance ?? AppearanceScope.maybeOf(context);
     return ListView(
@@ -306,8 +313,9 @@ class SettingsPage extends StatelessWidget {
       ),
     );
     if (result == null || !context.mounted) return;
+    final Uri? uploadedAvatarUri;
     try {
-      await management.updateProfile(
+      uploadedAvatarUri = await management.updateProfile(
         displayName: result.displayName,
         avatarBytes: result.avatarBytes,
         avatarName: result.avatarBytes == null ? null : 'profile.png',
@@ -324,11 +332,7 @@ class SettingsPage extends StatelessWidget {
       if (result.removeAvatar) {
         await profileImageStore.delete(key);
       } else if (result.source != null) {
-        await profileImageStore.write(
-          key,
-          controller!.client.current.account?.avatarMediaUri,
-          result.source!,
-        );
+        await profileImageStore.write(key, uploadedAvatarUri, result.source!);
       }
     } catch (_) {
       sourceSaved = false;
@@ -817,6 +821,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
   ui.Image? _previewImage;
   int _decodeGeneration = 0;
   bool _pictureChanged = false;
+  bool _sourceIsRetained = false;
   bool _loadingSource = false;
   bool _saving = false;
   ProfileImageTransform _transform = const ProfileImageTransform();
@@ -842,11 +847,20 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       } catch (_) {
         // The Matrix copy is still usable if local support storage fails.
       }
-      final source =
-          stored ??
-          ProfileImageSource(bytes: await widget.client.downloadMedia(uri));
+      final ProfileImageSource source;
+      if (stored != null) {
+        source = stored;
+      } else {
+        final avatarBytes = await widget.client.downloadMedia(uri);
+        try {
+          stored = await widget.imageStore.recover(key, uri, avatarBytes);
+        } catch (_) {
+          // The server copy remains usable if source recovery fails.
+        }
+        source = stored ?? ProfileImageSource(bytes: avatarBytes);
+      }
       if (mounted && !_pictureChanged) {
-        _setSource(source, changed: false);
+        _setSource(source, changed: false, retained: stored != null);
       }
     } catch (_) {
       // A name change and choosing a replacement picture remain available.
@@ -893,6 +907,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     _setSource(
       ProfileImageSource(bytes: source, transform: result.transform),
       changed: true,
+      retained: true,
     );
     await _save(preparedAvatar: result.avatarBytes);
   }
@@ -918,6 +933,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     setState(() {
       _sourceBytes = null;
       _pictureChanged = true;
+      _sourceIsRetained = false;
       _removeAvatar = true;
       _error = null;
     });
@@ -994,6 +1010,14 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                 radius: 42,
                 child: Text(_profileInitials(_nameController.text)),
               ),
+            if (_sourceBytes != null && !_sourceIsRetained)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Only the uploaded avatar is available here. Replace it to edit the full image.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -1063,12 +1087,17 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     );
   }
 
-  void _setSource(ProfileImageSource source, {required bool changed}) {
+  void _setSource(
+    ProfileImageSource source, {
+    required bool changed,
+    required bool retained,
+  }) {
     _clearDecodedImage();
     setState(() {
       _sourceBytes = source.bytes;
       _transform = source.transform;
       _pictureChanged = changed;
+      _sourceIsRetained = retained;
       _removeAvatar = false;
       _error = null;
     });

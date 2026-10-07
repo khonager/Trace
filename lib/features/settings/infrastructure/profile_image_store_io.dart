@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:trace/features/settings/application/profile_crop.dart';
@@ -25,40 +26,76 @@ Future<ProfileImageSource?> readProfileSource(
   String key,
   Uri? avatarUri,
 ) async {
+  final stored = await _readStoredSource(key);
+  if (stored == null ||
+      stored.metadata['uri'] != (avatarUri?.toString() ?? '')) {
+    return null;
+  }
+  return stored.source;
+}
+
+Future<ProfileImageSource?> recoverProfileSource(
+  String key,
+  Uri avatarUri,
+  Uint8List avatarBytes,
+) async {
+  final stored = await _readStoredSource(key);
+  if (stored == null) return null;
+  if (stored.metadata['uri'] == avatarUri.toString()) return stored.source;
+  try {
+    if (!await sourceMatchesAvatar(stored.source, avatarBytes)) return null;
+    await (await _uriFile(key)).writeAsString(
+      jsonEncode({...stored.metadata, 'uri': avatarUri.toString()}),
+      flush: true,
+    );
+    return stored.source;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<({ProfileImageSource source, Map<String, dynamic> metadata})?>
+_readStoredSource(String key) async {
   try {
     final image = await _sourceFile(key);
     final marker = await _uriFile(key);
     if (!await image.exists() || !await marker.exists()) return null;
     final metadata = jsonDecode(await marker.readAsString());
-    if (metadata is! Map<String, dynamic> ||
-        metadata['uri'] != (avatarUri?.toString() ?? '')) {
-      return null;
-    }
+    if (metadata is! Map<String, dynamic>) return null;
     final bytes = await image.readAsBytes();
     if (metadata['version'] == 2) {
-      return ProfileImageSource(
-        bytes: bytes,
-        transform: ProfileImageTransform(
-          scale: ((metadata['scale'] as num?)?.toDouble() ?? 1).clamp(.25, 6),
-          offset: Offset(
-            ((metadata['offsetX'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
-            ((metadata['offsetY'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
+      return (
+        source: ProfileImageSource(
+          bytes: bytes,
+          transform: ProfileImageTransform(
+            scale: ((metadata['scale'] as num?)?.toDouble() ?? 1).clamp(.25, 6),
+            offset: Offset(
+              ((metadata['offsetX'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
+              ((metadata['offsetY'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
+            ),
+            rotation: (metadata['rotation'] as num?)?.toDouble() ?? 0,
+            flipHorizontal: metadata['flipHorizontal'] == true,
+            flipVertical: metadata['flipVertical'] == true,
           ),
-          rotation: (metadata['rotation'] as num?)?.toDouble() ?? 0,
-          flipHorizontal: metadata['flipHorizontal'] == true,
-          flipVertical: metadata['flipVertical'] == true,
         ),
+        metadata: metadata,
       );
     }
-    return ProfileImageSource(
-      bytes: bytes,
-      legacyZoom: ((metadata['zoom'] as num?)?.toDouble() ?? 1).clamp(1.0, 4.0),
-      legacyHorizontal: ((metadata['horizontal'] as num?)?.toDouble() ?? 0)
-          .clamp(-1.0, 1.0),
-      legacyVertical: ((metadata['vertical'] as num?)?.toDouble() ?? 0).clamp(
-        -1.0,
-        1.0,
+    return (
+      source: ProfileImageSource(
+        bytes: bytes,
+        legacyZoom: ((metadata['zoom'] as num?)?.toDouble() ?? 1).clamp(
+          1.0,
+          4.0,
+        ),
+        legacyHorizontal: ((metadata['horizontal'] as num?)?.toDouble() ?? 0)
+            .clamp(-1.0, 1.0),
+        legacyVertical: ((metadata['vertical'] as num?)?.toDouble() ?? 0).clamp(
+          -1.0,
+          1.0,
+        ),
       ),
+      metadata: metadata,
     );
   } on FileSystemException {
     return null;

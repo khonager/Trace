@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:trace/features/settings/application/profile_crop.dart';
 
@@ -15,6 +14,14 @@ class ProfileImageStore {
 
   Future<ProfileImageSource?> read(String accountKey, Uri? avatarUri) =>
       platform.readProfileSource(accountKey, avatarUri);
+
+  /// Repairs an older URI marker only when the stored source reproduces the
+  /// avatar currently on the server.
+  Future<ProfileImageSource?> recover(
+    String accountKey,
+    Uri avatarUri,
+    Uint8List avatarBytes,
+  ) => platform.recoverProfileSource(accountKey, avatarUri, avatarBytes);
 
   Future<void> write(
     String accountKey,
@@ -49,4 +56,25 @@ class ProfileImageSource {
           horizontal: legacyHorizontal,
           vertical: legacyVertical,
         );
+}
+
+Future<bool> sourceMatchesAvatar(
+  ProfileImageSource source,
+  Uint8List avatarBytes,
+) async {
+  final Uint8List rendered;
+  if (source.legacyZoom case final zoom?) {
+    rendered = await cropProfileImage(
+      source.bytes,
+      zoom: zoom,
+      horizontal: source.legacyHorizontal,
+      vertical: source.legacyVertical,
+    );
+  } else {
+    rendered = await renderProfileImage(
+      source.bytes,
+      transform: source.transform,
+    );
+  }
+  return listEquals(rendered, avatarBytes);
 }
