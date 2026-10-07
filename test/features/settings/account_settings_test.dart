@@ -95,12 +95,12 @@ void main() {
       );
       await tester.pump();
 
-      expect(client.thumbnailRequests, 1);
+      expect(client.originalRequests, 1);
       await tester.tap(find.byKey(const Key('open-own-profile-picture')));
       await tester.pump();
       await tester.pump();
 
-      expect(client.originalRequests, 1);
+      expect(client.originalRequests, 2);
       expect(find.byType(InteractiveViewer), findsOneWidget);
       expect(
         find.byKey(const Key('download-own-profile-picture')),

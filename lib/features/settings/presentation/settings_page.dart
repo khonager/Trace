@@ -531,7 +531,7 @@ class _MatrixAccountAvatarState extends State<_MatrixAccountAvatar> {
   void _load() {
     _image = widget.mediaUri == null
         ? null
-        : widget.client.downloadMediaThumbnail(widget.mediaUri!);
+        : widget.client.downloadMedia(widget.mediaUri!);
   }
 
   @override

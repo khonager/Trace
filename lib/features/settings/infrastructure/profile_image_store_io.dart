@@ -34,13 +34,21 @@ Future<ProfileImageSource?> readProfileSource(
     }
     return ProfileImageSource(
       bytes: await image.readAsBytes(),
-      zoom: (metadata['zoom'] as num?)?.toDouble() ?? 1,
-      horizontal: (metadata['horizontal'] as num?)?.toDouble() ?? 0,
-      vertical: (metadata['vertical'] as num?)?.toDouble() ?? 0,
+      zoom: ((metadata['zoom'] as num?)?.toDouble() ?? 1).clamp(1.0, 4.0),
+      horizontal: ((metadata['horizontal'] as num?)?.toDouble() ?? 0).clamp(
+        -1.0,
+        1.0,
+      ),
+      vertical: ((metadata['vertical'] as num?)?.toDouble() ?? 0).clamp(
+        -1.0,
+        1.0,
+      ),
     );
   } on FileSystemException {
     return null;
   } on FormatException {
+    return null;
+  } on TypeError {
     return null;
   }
 }
