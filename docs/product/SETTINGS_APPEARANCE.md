@@ -12,6 +12,10 @@ scaled down with their full aspect ratio before local storage. The stored
 source is used only while the Matrix avatar URI still matches, so an avatar
 changed by another client cannot be accidentally restored from stale data.
 
+Controls repaint as values change; preference writes are grouped after a short
+pause in dragging. The crop preview paints from one decoded image and only
+encodes the uploaded PNG when Save is pressed.
+
 ![Expanded appearance settings](settings-appearance.png)
 
 The screenshot is a widget preview. Its test renderer substitutes placeholder

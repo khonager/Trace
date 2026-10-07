@@ -288,12 +288,11 @@ class SettingsPage extends StatelessWidget {
     final management = matrixClient as MatrixAccountManagementPort;
     final result = await showDialog<_ProfileEditResult>(
       context: context,
-      builder: (context) =>
-          _ProfileEditDialog(
-            account: account,
-            client: controller!.client,
-            imageStore: profileImageStore,
-          ),
+      builder: (context) => _ProfileEditDialog(
+        account: account,
+        client: controller!.client,
+        imageStore: profileImageStore,
+      ),
     );
     if (result == null || !context.mounted) return;
     try {
@@ -1090,8 +1089,12 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     final generation = ++_decodeGeneration;
     try {
       final codec = await ui.instantiateImageCodec(bytes);
-      final image = (await codec.getNextFrame()).image;
-      codec.dispose();
+      final ui.Image image;
+      try {
+        image = (await codec.getNextFrame()).image;
+      } finally {
+        codec.dispose();
+      }
       if (!mounted || generation != _decodeGeneration) {
         image.dispose();
         return;

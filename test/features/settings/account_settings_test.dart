@@ -36,12 +36,7 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: SettingsPage(
-            controller: controller,
-            profileImageStore: const _TestProfileImageStore(),
-          ),
-        ),
+        home: Scaffold(body: SettingsPage(controller: controller)),
       ),
     );
 
@@ -124,10 +119,7 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     final appearance = AppearanceSettings();
-    addTearDown(() async {
-      await appearance.flush();
-      appearance.dispose();
-    });
+    addTearDown(appearance.dispose);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -174,10 +166,19 @@ void main() {
     client.publish();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: SettingsPage(controller: controller)),
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            profileImageStore: const _TestProfileImageStore(),
+          ),
+        ),
       ),
     );
     await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
     await tester.pumpAndSettle();
 
     final preview = find.byKey(const Key('profile-crop-preview'));
@@ -191,10 +192,18 @@ void main() {
       matching: find.byType(Slider),
     );
     await tester.drag(slider, const Offset(100, 0));
-    await tester.pump();
+    await tester.pumpAndSettle();
     final after = await _previewCenterColor(tester, preview);
     expect(after, isNot(before));
   });
+}
+
+class _TestProfileImageStore extends ProfileImageStore {
+  const _TestProfileImageStore();
+
+  @override
+  Future<ProfileImageSource?> read(String accountKey, Uri? avatarUri) async =>
+      null;
 }
 
 final class _AccountClient
