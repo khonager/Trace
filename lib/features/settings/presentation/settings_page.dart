@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -6,9 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/settings/application/appearance_settings.dart';
 import 'package:trace/features/settings/application/profile_crop.dart';
 import 'package:trace/features/settings/application/profile_image_store.dart';
+import 'package:trace/features/settings/presentation/profile_picture_editor.dart';
+
+Future<ChatAttachment?> _pickProfilePicture() => pickChatAttachment(
+  type: FileType.image,
+  dialogTitle: 'Choose a profile picture',
+);
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -16,11 +22,13 @@ class SettingsPage extends StatelessWidget {
     this.controller,
     this.appearance,
     this.profileImageStore = const ProfileImageStore(),
+    this.pickProfilePicture,
   });
 
   final MatrixSessionController? controller;
   final AppearanceSettings? appearance;
   final ProfileImageStore profileImageStore;
+  final Future<ChatAttachment?> Function()? pickProfilePicture;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +300,7 @@ class SettingsPage extends StatelessWidget {
         account: account,
         client: controller!.client,
         imageStore: profileImageStore,
+        pickProfilePicture: pickProfilePicture ?? _pickProfilePicture,
       ),
     );
     if (result == null || !context.mounted) return;
@@ -502,11 +511,13 @@ class _ProfileEditDialog extends StatefulWidget {
     required this.account,
     required this.client,
     required this.imageStore,
+    required this.pickProfilePicture,
   });
 
   final MatrixAccount account;
   final MatrixClientPort client;
   final ProfileImageStore imageStore;
+  final Future<ChatAttachment?> Function() pickProfilePicture;
 
   @override
   State<_ProfileEditDialog> createState() => _ProfileEditDialogState();
@@ -806,9 +817,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
   bool _pictureChanged = false;
   bool _loadingSource = false;
   bool _saving = false;
-  double _zoom = 1;
-  double _horizontal = 0;
-  double _vertical = 0;
+  ProfileImageTransform _transform = const ProfileImageTransform();
   bool _removeAvatar = false;
   String? _error;
 
@@ -835,7 +844,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
           stored ??
           ProfileImageSource(bytes: await widget.client.downloadMedia(uri));
       if (mounted && !_pictureChanged) {
-        _setSource(source, changed: false);
+        await _setSource(source, changed: false);
       }
     } catch (_) {
       // A name change and choosing a replacement picture remain available.
@@ -852,20 +861,55 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     super.dispose();
   }
 
-  Future<void> _choosePicture() async {
-    final file = await FilePicker.pickFile(type: FileType.image);
+  Future<void> _replacePicture() async {
+    final ChatAttachment? file;
+    try {
+      file = await widget.pickProfilePicture();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Could not open the file chooser: $error');
+      }
+      return;
+    }
     if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
     Uint8List source;
     try {
-      source = await prepareProfileSource(bytes);
+      source = await prepareProfileSource(await file.readAsBytes());
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not prepare this picture.');
       return;
     }
     if (!mounted) return;
-    _setSource(ProfileImageSource(bytes: source), changed: true);
+    final transform = await showDialog<ProfileImageTransform>(
+      context: context,
+      builder: (_) => ProfilePictureEditor(
+        source: source,
+        initialTransform: const ProfileImageTransform(),
+      ),
+    );
+    if (!mounted || transform == null) return;
+    await _setSource(
+      ProfileImageSource(bytes: source, transform: transform),
+      changed: true,
+    );
+    if (!mounted) return;
+    await _save();
+  }
+
+  Future<void> _editPicture() async {
+    final source = _sourceBytes;
+    if (source == null) return;
+    final transform = await showDialog<ProfileImageTransform>(
+      context: context,
+      builder: (_) =>
+          ProfilePictureEditor(source: source, initialTransform: _transform),
+    );
+    if (!mounted || transform == null) return;
+    setState(() {
+      _transform = transform;
+      _pictureChanged = true;
+    });
+    await _save();
   }
 
   void _removePicture() {
@@ -884,17 +928,10 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       final source = _sourceBytes;
       final cropped = _pictureChanged && !_removeAvatar && source != null
           ? _previewImage == null
-                ? await cropProfileImage(
-                    source,
-                    zoom: _zoom,
-                    horizontal: _horizontal,
-                    vertical: _vertical,
-                  )
-                : await cropProfileImageFromDecoded(
+                ? await renderProfileImage(source, transform: _transform)
+                : await renderProfileImageFromDecoded(
                     _previewImage!,
-                    zoom: _zoom,
-                    horizontal: _horizontal,
-                    vertical: _vertical,
+                    transform: _transform,
                   )
           : null;
       if (!mounted) return;
@@ -905,19 +942,14 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
           avatarBytes: cropped,
           source: cropped == null
               ? null
-              : ProfileImageSource(
-                  bytes: source!,
-                  zoom: _zoom,
-                  horizontal: _horizontal,
-                  vertical: _vertical,
-                ),
+              : ProfileImageSource(bytes: source!, transform: _transform),
           removeAvatar: _removeAvatar,
         ),
       );
     } catch (_) {
       if (mounted) {
         setState(
-          () => _error = 'Could not crop this picture. Try another image.',
+          () => _error = 'Could not render this picture. Try another image.',
         );
       }
     } finally {
@@ -947,11 +979,9 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                     child: _previewImage == null
                         ? const Center(child: CircularProgressIndicator())
                         : CustomPaint(
-                            painter: _ProfileCropPainter(
+                            painter: ProfileImagePainter(
                               image: _previewImage!,
-                              zoom: _zoom,
-                              horizontal: _horizontal,
-                              vertical: _vertical,
+                              transform: _transform,
                             ),
                           ),
                   ),
@@ -962,55 +992,44 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                 radius: 42,
                 child: Text(_profileInitials(_nameController.text)),
               ),
-            if (_sourceBytes != null && !_removeAvatar) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Frame picture',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              _cropSlider('Zoom', _zoom, 1, 4, (value) => _zoom = value),
-              _cropSlider(
-                'Left / right',
-                _horizontal,
-                -1,
-                1,
-                (value) => _horizontal = value,
-              ),
-              _cropSlider(
-                'Up / down',
-                _vertical,
-                -1,
-                1,
-                (value) => _vertical = value,
-              ),
-              const Text(
-                'The full image stays on this device for later reframing.',
-              ),
-            ],
             const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
+            Row(
               children: [
-                OutlinedButton.icon(
-                  onPressed: _choosePicture,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Choose picture'),
-                ),
-                if (widget.account.avatarMediaUri != null ||
-                    _sourceBytes != null)
-                  TextButton.icon(
-                    onPressed: _removePicture,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Remove picture'),
+                if (_sourceBytes != null && !_removeAvatar)
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const Key('edit-profile-picture'),
+                      onPressed: _previewImage == null ? null : _editPicture,
+                      child: const Text('Edit picture'),
+                    ),
                   ),
+                if (_sourceBytes != null && !_removeAvatar)
+                  const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('replace-profile-picture'),
+                    onPressed: _replacePicture,
+                    child: Text(
+                      widget.account.avatarMediaUri == null &&
+                              _sourceBytes == null
+                          ? 'Add picture'
+                          : 'Replace picture',
+                    ),
+                  ),
+                ),
               ],
             ),
+            if (widget.account.avatarMediaUri != null || _sourceBytes != null)
+              TextButton.icon(
+                onPressed: _removePicture,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Remove picture'),
+              ),
             const SizedBox(height: 16),
             TextField(
               key: const Key('matrix-display-name-field'),
               controller: _nameController,
-              autofocus: true,
+              autofocus: false,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Display name',
@@ -1042,41 +1061,19 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     );
   }
 
-  Widget _cropSlider(
-    String label,
-    double value,
-    double min,
-    double max,
-    void Function(double) update,
-  ) => Row(
-    children: [
-      SizedBox(width: 90, child: Text(label)),
-      Expanded(
-        child: Slider(
-          value: value,
-          min: min,
-          max: max,
-          onChanged: (next) => setState(() {
-            update(next);
-            _pictureChanged = true;
-          }),
-        ),
-      ),
-    ],
-  );
-
-  void _setSource(ProfileImageSource source, {required bool changed}) {
+  Future<void> _setSource(
+    ProfileImageSource source, {
+    required bool changed,
+  }) async {
     _clearDecodedImage();
     setState(() {
       _sourceBytes = source.bytes;
-      _zoom = source.zoom;
-      _horizontal = source.horizontal;
-      _vertical = source.vertical;
+      _transform = source.transform;
       _pictureChanged = changed;
       _removeAvatar = false;
       _error = null;
     });
-    unawaited(_decodePreview(source.bytes));
+    await _decodePreview(source);
   }
 
   void _clearDecodedImage() {
@@ -1085,10 +1082,10 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     _previewImage = null;
   }
 
-  Future<void> _decodePreview(Uint8List bytes) async {
+  Future<void> _decodePreview(ProfileImageSource source) async {
     final generation = ++_decodeGeneration;
     try {
-      final codec = await ui.instantiateImageCodec(bytes);
+      final codec = await ui.instantiateImageCodec(source.bytes);
       final ui.Image image;
       try {
         image = (await codec.getNextFrame()).image;
@@ -1099,50 +1096,20 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
         image.dispose();
         return;
       }
-      setState(() => _previewImage = image);
+      setState(() {
+        _previewImage = image;
+        if (!_pictureChanged) {
+          _transform = source.transformFor(
+            Size(image.width.toDouble(), image.height.toDouble()),
+          );
+        }
+      });
     } catch (_) {
       if (mounted && generation == _decodeGeneration) {
         setState(() => _error = 'Could not display this picture.');
       }
     }
   }
-}
-
-class _ProfileCropPainter extends CustomPainter {
-  const _ProfileCropPainter({
-    required this.image,
-    required this.zoom,
-    required this.horizontal,
-    required this.vertical,
-  });
-
-  final ui.Image image;
-  final double zoom;
-  final double horizontal;
-  final double vertical;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final source = profileCropRect(
-      Size(image.width.toDouble(), image.height.toDouble()),
-      zoom: zoom,
-      horizontal: horizontal,
-      vertical: vertical,
-    );
-    canvas.drawImageRect(
-      image,
-      source,
-      Offset.zero & size,
-      Paint()..filterQuality = FilterQuality.high,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ProfileCropPainter oldDelegate) =>
-      image != oldDelegate.image ||
-      zoom != oldDelegate.zoom ||
-      horizontal != oldDelegate.horizontal ||
-      vertical != oldDelegate.vertical;
 }
 
 class _SecretDialog extends StatefulWidget {

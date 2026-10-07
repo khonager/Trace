@@ -9,12 +9,18 @@ import 'package:trace/features/chat/application/attachment_picker_fallback_stub.
 
 /// Opens the platform file chooser, with a Linux desktop fallback for systems
 /// whose XDG portal does not expose the FileChooser interface.
-Future<ChatAttachment?> pickChatAttachment() async {
+Future<ChatAttachment?> pickChatAttachment({
+  FileType type = FileType.any,
+  String dialogTitle = 'Add an attachment',
+}) async {
   try {
-    final file = await FilePicker.pickFile(dialogTitle: 'Add an attachment');
+    final file = await FilePicker.pickFile(
+      type: type,
+      dialogTitle: dialogTitle,
+    );
     return file == null ? null : ChatAttachment.fromPlatformFile(file);
   } catch (error, stackTrace) {
-    final fallback = await pickChatAttachmentFallback();
+    final fallback = await pickChatAttachmentFallback(dialogTitle: dialogTitle);
     if (fallback.available) return fallback.file;
     Error.throwWithStackTrace(error, stackTrace);
   }

@@ -1,0 +1,287 @@
+import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:trace/features/settings/application/profile_crop.dart';
+
+/// Full-size, direct-manipulation editor for the retained profile source.
+class ProfilePictureEditor extends StatefulWidget {
+  const ProfilePictureEditor({
+    super.key,
+    required this.source,
+    required this.initialTransform,
+  });
+
+  final Uint8List source;
+  final ProfileImageTransform initialTransform;
+
+  @override
+  State<ProfilePictureEditor> createState() => _ProfilePictureEditorState();
+}
+
+class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
+  ui.Image? _image;
+  String? _error;
+  late ProfileImageTransform _transform;
+  late ProfileImageTransform _gestureStart;
+  Offset _startFocalPoint = Offset.zero;
+  bool _circlePreview = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _transform = widget.initialTransform;
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    try {
+      final codec = await ui.instantiateImageCodec(widget.source);
+      final ui.Image image;
+      try {
+        image = (await codec.getNextFrame()).image;
+      } finally {
+        codec.dispose();
+      }
+      if (!mounted) {
+        image.dispose();
+        return;
+      }
+      setState(() => _image = image);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not open this picture.');
+    }
+  }
+
+  @override
+  void dispose() {
+    _image?.dispose();
+    super.dispose();
+  }
+
+  void _startGesture(ScaleStartDetails details) {
+    _gestureStart = _transform;
+    _startFocalPoint = details.localFocalPoint;
+  }
+
+  void _updateGesture(ScaleUpdateDetails details, double side) {
+    setState(() {
+      _transform = transformProfileGesture(
+        start: _gestureStart,
+        startFocalPoint: _startFocalPoint,
+        focalPoint: details.localFocalPoint,
+        gestureScale: details.scale,
+        gestureRotation: details.rotation,
+        viewportSize: side,
+      );
+    });
+  }
+
+  void _change(ProfileImageTransform Function(ProfileImageTransform) change) {
+    setState(() => _transform = change(_transform));
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog.fullscreen(
+    key: const Key('profile-picture-editor'),
+    backgroundColor: const Color(0xFF141518),
+    child: SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Cancel picture editing',
+                  color: Colors.white,
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+                const Expanded(
+                  child: Text(
+                    'Edit profile picture',
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ToggleButtons(
+            isSelected: [_circlePreview, !_circlePreview],
+            color: Colors.white70,
+            selectedColor: Colors.white,
+            fillColor: const Color(0xFF3A3D45),
+            borderColor: Colors.white38,
+            selectedBorderColor: Colors.white70,
+            onPressed: (index) => setState(() => _circlePreview = index == 0),
+            children: const [
+              Padding(
+                key: Key('profile-preview-circle'),
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text('Circle'),
+              ),
+              Padding(
+                key: Key('profile-preview-square'),
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text('Square'),
+              ),
+            ],
+          ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final side = math
+                    .min(constraints.maxWidth - 32, constraints.maxHeight - 16)
+                    .clamp(1.0, 680.0);
+                return Center(
+                  child: SizedBox.square(
+                    dimension: side,
+                    child: GestureDetector(
+                      key: const Key('profile-picture-gesture-area'),
+                      behavior: HitTestBehavior.opaque,
+                      onScaleStart: _image == null ? null : _startGesture,
+                      onScaleUpdate: _image == null
+                          ? null
+                          : (details) => _updateGesture(details, side),
+                      child: _circlePreview
+                          ? ClipOval(child: _picturePreview())
+                          : ClipRect(child: _picturePreview()),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: Text(
+              'Drag to move · Pinch to zoom and rotate',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 2,
+              children: [
+                _tool(
+                  'Zoom out',
+                  Icons.remove,
+                  () => _change(
+                    (value) => value.copyWith(
+                      scale: (value.scale / 1.2).clamp(.25, 6.0),
+                    ),
+                  ),
+                ),
+                _tool(
+                  'Zoom in',
+                  Icons.add,
+                  () => _change(
+                    (value) => value.copyWith(
+                      scale: (value.scale * 1.2).clamp(.25, 6.0),
+                    ),
+                  ),
+                ),
+                _tool(
+                  'Rotate left',
+                  Icons.rotate_left,
+                  () => _change(
+                    (value) =>
+                        value.copyWith(rotation: value.rotation - math.pi / 2),
+                  ),
+                ),
+                _tool(
+                  'Rotate right',
+                  Icons.rotate_right,
+                  () => _change(
+                    (value) =>
+                        value.copyWith(rotation: value.rotation + math.pi / 2),
+                  ),
+                ),
+                _tool(
+                  'Flip horizontally',
+                  Icons.flip,
+                  () => _change(
+                    (value) =>
+                        value.copyWith(flipHorizontal: !value.flipHorizontal),
+                  ),
+                ),
+                _tool(
+                  'Flip vertically',
+                  Icons.swap_vert,
+                  () => _change(
+                    (value) =>
+                        value.copyWith(flipVertical: !value.flipVertical),
+                  ),
+                ),
+                _tool(
+                  'Reset picture',
+                  Icons.restart_alt,
+                  () => setState(
+                    () => _transform = const ProfileImageTransform(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('save-profile-picture-edit'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF8B68E8),
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.white24,
+                  disabledForegroundColor: Colors.white70,
+                ),
+                onPressed: _image == null
+                    ? null
+                    : () => Navigator.pop(context, _transform),
+                icon: const Icon(Icons.check),
+                label: const Text('Save picture'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _picturePreview() => _image == null
+      ? Center(
+          child: _error == null
+              ? const CircularProgressIndicator()
+              : Text(_error!, style: const TextStyle(color: Colors.white)),
+        )
+      : CustomPaint(
+          painter: ProfileImagePainter(image: _image!, transform: _transform),
+        );
+
+  Widget _tool(String label, IconData icon, VoidCallback action) => SizedBox(
+    width: 74,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: label,
+          color: Colors.white,
+          onPressed: _image == null ? null : action,
+          icon: Icon(icon),
+        ),
+        Text(
+          label,
+          maxLines: 1,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 10),
+        ),
+      ],
+    ),
+  );
+}

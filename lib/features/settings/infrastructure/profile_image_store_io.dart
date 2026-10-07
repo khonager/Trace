@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:trace/features/settings/application/profile_crop.dart';
 import 'package:trace/features/settings/application/profile_image_store.dart';
+import 'package:flutter/widgets.dart';
 
 Future<Directory> _sourceDirectory() async {
   final root = await getApplicationSupportDirectory();
@@ -32,14 +34,28 @@ Future<ProfileImageSource?> readProfileSource(
         metadata['uri'] != (avatarUri?.toString() ?? '')) {
       return null;
     }
+    final bytes = await image.readAsBytes();
+    if (metadata['version'] == 2) {
+      return ProfileImageSource(
+        bytes: bytes,
+        transform: ProfileImageTransform(
+          scale: ((metadata['scale'] as num?)?.toDouble() ?? 1).clamp(.25, 6),
+          offset: Offset(
+            ((metadata['offsetX'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
+            ((metadata['offsetY'] as num?)?.toDouble() ?? 0).clamp(-1.5, 1.5),
+          ),
+          rotation: (metadata['rotation'] as num?)?.toDouble() ?? 0,
+          flipHorizontal: metadata['flipHorizontal'] == true,
+          flipVertical: metadata['flipVertical'] == true,
+        ),
+      );
+    }
     return ProfileImageSource(
-      bytes: await image.readAsBytes(),
-      zoom: ((metadata['zoom'] as num?)?.toDouble() ?? 1).clamp(1.0, 4.0),
-      horizontal: ((metadata['horizontal'] as num?)?.toDouble() ?? 0).clamp(
-        -1.0,
-        1.0,
-      ),
-      vertical: ((metadata['vertical'] as num?)?.toDouble() ?? 0).clamp(
+      bytes: bytes,
+      legacyZoom: ((metadata['zoom'] as num?)?.toDouble() ?? 1).clamp(1.0, 4.0),
+      legacyHorizontal: ((metadata['horizontal'] as num?)?.toDouble() ?? 0)
+          .clamp(-1.0, 1.0),
+      legacyVertical: ((metadata['vertical'] as num?)?.toDouble() ?? 0).clamp(
         -1.0,
         1.0,
       ),
@@ -64,10 +80,14 @@ Future<void> writeProfileSource(
   await pending.rename(image.path);
   await (await _uriFile(key)).writeAsString(
     jsonEncode({
+      'version': 2,
       'uri': avatarUri?.toString() ?? '',
-      'zoom': source.zoom,
-      'horizontal': source.horizontal,
-      'vertical': source.vertical,
+      'scale': source.transform.scale,
+      'offsetX': source.transform.offset.dx,
+      'offsetY': source.transform.offset.dy,
+      'rotation': source.transform.rotation,
+      'flipHorizontal': source.transform.flipHorizontal,
+      'flipVertical': source.transform.flipVertical,
     }),
     flush: true,
   );

@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
+import 'package:trace/features/settings/application/profile_crop.dart';
+
 import 'package:trace/features/settings/infrastructure/profile_image_store_stub.dart'
     if (dart.library.io) 'package:trace/features/settings/infrastructure/profile_image_store_io.dart'
     as platform;
@@ -26,13 +29,24 @@ class ProfileImageStore {
 class ProfileImageSource {
   const ProfileImageSource({
     required this.bytes,
-    this.zoom = 1,
-    this.horizontal = 0,
-    this.vertical = 0,
+    this.transform = const ProfileImageTransform(),
+    this.legacyZoom,
+    this.legacyHorizontal = 0,
+    this.legacyVertical = 0,
   });
 
   final Uint8List bytes;
-  final double zoom;
-  final double horizontal;
-  final double vertical;
+  final ProfileImageTransform transform;
+  final double? legacyZoom;
+  final double legacyHorizontal;
+  final double legacyVertical;
+
+  ProfileImageTransform transformFor(Size imageSize) => legacyZoom == null
+      ? transform
+      : ProfileImageTransform.fromLegacy(
+          imageSize,
+          zoom: legacyZoom!,
+          horizontal: legacyHorizontal,
+          vertical: legacyVertical,
+        );
 }

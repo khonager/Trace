@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:trace/features/chat/application/attachment_picker.dart';
 
-Future<AttachmentPickerFallbackResult> pickChatAttachmentFallback() async {
+Future<AttachmentPickerFallbackResult> pickChatAttachmentFallback({
+  required String dialogTitle,
+}) async {
   if (!Platform.isLinux) {
     return const AttachmentPickerFallbackResult.unavailable();
   }
@@ -11,7 +13,7 @@ Future<AttachmentPickerFallbackResult> pickChatAttachmentFallback() async {
   try {
     result = await Process.run('zenity', [
       '--file-selection',
-      '--title=Add an attachment',
+      '--title=$dialogTitle',
     ]);
   } on ProcessException {
     return const AttachmentPickerFallbackResult.unavailable();

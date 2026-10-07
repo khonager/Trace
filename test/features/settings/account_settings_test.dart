@@ -1,13 +1,14 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/settings/application/appearance_settings.dart';
 import 'package:trace/features/settings/application/profile_image_store.dart';
 import 'package:trace/features/settings/presentation/settings_page.dart';
@@ -160,16 +161,19 @@ void main() {
     expect(find.byKey(const Key('background-blur-slider')), findsOneWidget);
   });
 
-  testWidgets('profile crop preview repaints during a drag', (tester) async {
+  testWidgets('profile editor applies gestures without focusing the name', (
+    tester,
+  ) async {
     client.avatarUri = Uri.parse('mxc://example.org/avatar');
     client.pictureBytes = (await tester.runAsync(_twoColorImage))!;
     client.publish();
+    final imageStore = _TestProfileImageStore();
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: SettingsPage(
             controller: controller,
-            profileImageStore: const _TestProfileImageStore(),
+            profileImageStore: imageStore,
           ),
         ),
       ),
@@ -183,27 +187,164 @@ void main() {
 
     final preview = find.byKey(const Key('profile-crop-preview'));
     expect(preview, findsOneWidget);
-    final before = await _previewCenterColor(tester, preview);
-    final horizontalSlider = find
-        .ancestor(of: find.text('Left / right'), matching: find.byType(Row))
-        .first;
-    final slider = find.descendant(
-      of: horizontalSlider,
-      matching: find.byType(Slider),
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('matrix-display-name-field')))
+          .autofocus,
+      isFalse,
     );
-    await tester.drag(slider, const Offset(100, 0));
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
+      isFalse,
+    );
+    expect(find.byType(Slider), findsNothing);
+    expect(find.byKey(const Key('replace-profile-picture')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('edit-profile-picture')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
     await tester.pumpAndSettle();
-    final after = await _previewCenterColor(tester, preview);
-    expect(after, isNot(before));
+    final area = find.byKey(const Key('profile-picture-gesture-area'));
+    expect(area, findsOneWidget);
+    final savePicture = find.byKey(const Key('save-profile-picture-edit'));
+    expect(tester.widget<FilledButton>(savePicture).onPressed, isNotNull);
+    expect(
+      tester
+          .widget<FilledButton>(savePicture)
+          .style
+          ?.backgroundColor
+          ?.resolve({}),
+      const Color(0xFF8B68E8),
+    );
+    await tester.tap(find.byKey(const Key('profile-preview-square')));
+    await tester.pump();
+    expect(
+      tester.widget<ToggleButtons>(find.byType(ToggleButtons)).isSelected,
+      [false, true],
+    );
+    await tester.tap(find.byKey(const Key('profile-preview-circle')));
+    await tester.pump();
+    expect(
+      tester.widget<ToggleButtons>(find.byType(ToggleButtons)).isSelected,
+      [true, false],
+    );
+    await tester.drag(area, const Offset(25, 15));
+    await tester.pump();
+    final center = tester.getCenter(area);
+    final first = await tester.startGesture(
+      center + const Offset(-35, 0),
+      pointer: 1,
+    );
+    final second = await tester.startGesture(
+      center + const Offset(35, 0),
+      pointer: 2,
+    );
+    await tester.pump();
+    await first.moveBy(const Offset(-20, -10));
+    await second.moveBy(const Offset(20, 10));
+    await tester.pump();
+    await first.up();
+    await second.up();
+    await tester.tap(find.byTooltip('Rotate right'));
+    await tester.tap(find.byTooltip('Flip horizontally'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('profile-picture-editor')), findsNothing);
+    expect(find.byKey(const Key('matrix-display-name-field')), findsNothing);
+    expect(client.uploadedAvatar, isNotNull);
+    expect(imageStore.written?.transform.offset, isNot(Offset.zero));
+    expect(imageStore.written?.transform.scale, greaterThan(1));
+    expect(
+      imageStore.written?.transform.rotation,
+      closeTo(math.pi / 2 + math.atan2(20, 110), .01),
+    );
+    expect(imageStore.written?.transform.flipHorizontal, isTrue);
+  });
+
+  testWidgets('replacing a picture opens the editor and saves it directly', (
+    tester,
+  ) async {
+    final source = (await tester.runAsync(_twoColorImage))!;
+    var pickerCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            profileImageStore: _TestProfileImageStore(),
+            pickProfilePicture: () async {
+              pickerCalls++;
+              return ChatAttachment(
+                name: 'profile.png',
+                readAsBytes: () async => source,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('replace-profile-picture')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(pickerCalls, 1);
+    expect(find.byKey(const Key('profile-picture-editor')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    expect(client.uploadedAvatar, isNotNull);
+    expect(find.byKey(const Key('matrix-display-name-field')), findsNothing);
+  });
+
+  testWidgets('a failed picture chooser reports its error', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            controller: controller,
+            pickProfilePicture: () async => throw Exception('No chooser'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('edit-matrix-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('replace-profile-picture')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No chooser'), findsOneWidget);
   });
 }
 
 class _TestProfileImageStore extends ProfileImageStore {
-  const _TestProfileImageStore();
+  _TestProfileImageStore();
+
+  ProfileImageSource? written;
 
   @override
   Future<ProfileImageSource?> read(String accountKey, Uri? avatarUri) async =>
       null;
+
+  @override
+  Future<void> write(
+    String accountKey,
+    Uri? avatarUri,
+    ProfileImageSource source,
+  ) async {
+    written = source;
+  }
 }
 
 final class _AccountClient
@@ -231,6 +372,7 @@ final class _AccountClient
   );
 
   String? updatedDisplayName;
+  Uint8List? uploadedAvatar;
   String? removedDeviceId;
   String? removalPassword;
   final List<String?> removalAttempts = [];
@@ -289,6 +431,7 @@ final class _AccountClient
     bool removeAvatar = false,
   }) async {
     updatedDisplayName = displayName;
+    uploadedAvatar = avatarBytes;
   }
 
   @override
@@ -398,21 +541,4 @@ Future<Uint8List> _twoColorImage() async {
     image.dispose();
     picture.dispose();
   }
-}
-
-Future<List<int>> _previewCenterColor(
-  WidgetTester tester,
-  Finder finder,
-) async {
-  final boundary = tester.renderObject<RenderRepaintBoundary>(finder);
-  return (await tester.runAsync(() async {
-    final image = await boundary.toImage(pixelRatio: 1);
-    try {
-      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      final offset = ((image.height ~/ 2) * image.width + image.width ~/ 2) * 4;
-      return data!.buffer.asUint8List().sublist(offset, offset + 4);
-    } finally {
-      image.dispose();
-    }
-  }))!;
 }
