@@ -18,8 +18,10 @@ dialog, while the display name waits for a deliberate tap. The picture editor
 supports drag, pinch zoom, pinch rotation, quarter-turn rotation, flips, and
 reset. Circle and Square switch between the avatar crop and the full uploaded
 image. Zooming out fills exposed edges with a blurred copy of the source.
-The editor preview and Matrix upload use the same painter; the uploaded PNG is
-encoded when Save picture is pressed, which commits the profile edit directly.
+The editor preview and Matrix upload use the same painter. A prominent Save
+picture button renders the uploaded PNG before closing the editor, then commits
+the profile edit directly. On Linux, Replace picture opens the Zenity chooser
+first when available and falls back to the platform picker.
 Older locally stored framing values are converted
 when their source image is opened.
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -14,6 +15,7 @@ import 'package:trace/features/settings/presentation/profile_picture_editor.dart
 Future<ChatAttachment?> _pickProfilePicture() => pickChatAttachment(
   type: FileType.image,
   dialogTitle: 'Choose a profile picture',
+  preferLinuxChooser: true,
 );
 
 class SettingsPage extends StatelessWidget {
@@ -844,7 +846,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
           stored ??
           ProfileImageSource(bytes: await widget.client.downloadMedia(uri));
       if (mounted && !_pictureChanged) {
-        await _setSource(source, changed: false);
+        _setSource(source, changed: false);
       }
     } catch (_) {
       // A name change and choosing a replacement picture remain available.
@@ -880,36 +882,35 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       return;
     }
     if (!mounted) return;
-    final transform = await showDialog<ProfileImageTransform>(
+    final result = await showDialog<ProfilePictureEditResult>(
       context: context,
       builder: (_) => ProfilePictureEditor(
         source: source,
         initialTransform: const ProfileImageTransform(),
       ),
     );
-    if (!mounted || transform == null) return;
-    await _setSource(
-      ProfileImageSource(bytes: source, transform: transform),
+    if (!mounted || result == null) return;
+    _setSource(
+      ProfileImageSource(bytes: source, transform: result.transform),
       changed: true,
     );
-    if (!mounted) return;
-    await _save();
+    await _save(preparedAvatar: result.avatarBytes);
   }
 
   Future<void> _editPicture() async {
     final source = _sourceBytes;
     if (source == null) return;
-    final transform = await showDialog<ProfileImageTransform>(
+    final result = await showDialog<ProfilePictureEditResult>(
       context: context,
       builder: (_) =>
           ProfilePictureEditor(source: source, initialTransform: _transform),
     );
-    if (!mounted || transform == null) return;
+    if (!mounted || result == null) return;
     setState(() {
-      _transform = transform;
+      _transform = result.transform;
       _pictureChanged = true;
     });
-    await _save();
+    await _save(preparedAvatar: result.avatarBytes);
   }
 
   void _removePicture() {
@@ -922,17 +923,18 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     });
   }
 
-  Future<void> _save() async {
+  Future<void> _save({Uint8List? preparedAvatar}) async {
     setState(() => _saving = true);
     try {
       final source = _sourceBytes;
       final cropped = _pictureChanged && !_removeAvatar && source != null
-          ? _previewImage == null
-                ? await renderProfileImage(source, transform: _transform)
-                : await renderProfileImageFromDecoded(
-                    _previewImage!,
-                    transform: _transform,
-                  )
+          ? preparedAvatar ??
+                (_previewImage == null
+                    ? await renderProfileImage(source, transform: _transform)
+                    : await renderProfileImageFromDecoded(
+                        _previewImage!,
+                        transform: _transform,
+                      ))
           : null;
       if (!mounted) return;
       Navigator.pop(
@@ -1061,10 +1063,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
     );
   }
 
-  Future<void> _setSource(
-    ProfileImageSource source, {
-    required bool changed,
-  }) async {
+  void _setSource(ProfileImageSource source, {required bool changed}) {
     _clearDecodedImage();
     setState(() {
       _sourceBytes = source.bytes;
@@ -1073,7 +1072,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       _removeAvatar = false;
       _error = null;
     });
-    await _decodePreview(source);
+    unawaited(_decodePreview(source));
   }
 
   void _clearDecodedImage() {

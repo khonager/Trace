@@ -12,7 +12,16 @@ import 'package:trace/features/chat/application/attachment_picker_fallback_stub.
 Future<ChatAttachment?> pickChatAttachment({
   FileType type = FileType.any,
   String dialogTitle = 'Add an attachment',
+  bool preferLinuxChooser = false,
 }) async {
+  if (preferLinuxChooser) {
+    try {
+      final fallback = await pickChatAttachmentFallback(dialogTitle: dialogTitle);
+      if (fallback.available) return fallback.file;
+    } catch (_) {
+      // Try the platform chooser if Zenity cannot start in this environment.
+    }
+  }
   try {
     final file = await FilePicker.pickFile(
       type: type,

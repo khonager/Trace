@@ -5,6 +5,16 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:trace/features/settings/application/profile_crop.dart';
 
+class ProfilePictureEditResult {
+  const ProfilePictureEditResult({
+    required this.transform,
+    required this.avatarBytes,
+  });
+
+  final ProfileImageTransform transform;
+  final Uint8List avatarBytes;
+}
+
 /// Full-size, direct-manipulation editor for the retained profile source.
 class ProfilePictureEditor extends StatefulWidget {
   const ProfilePictureEditor({
@@ -27,6 +37,7 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
   late ProfileImageTransform _gestureStart;
   Offset _startFocalPoint = Offset.zero;
   bool _circlePreview = true;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -80,6 +91,30 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
 
   void _change(ProfileImageTransform Function(ProfileImageTransform) change) {
     setState(() => _transform = change(_transform));
+  }
+
+  Future<void> _savePicture() async {
+    final image = _image;
+    if (image == null || _saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final bytes = await renderProfileImageFromDecoded(
+        image,
+        transform: _transform,
+      );
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        ProfilePictureEditResult(transform: _transform, avatarBytes: bytes),
+      );
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not save this picture.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -162,6 +197,8 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
               style: TextStyle(color: Colors.white70),
             ),
           ),
+          if (_error != null && _image != null)
+            Text(_error!, style: const TextStyle(color: Color(0xFFFF9F9F))),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Wrap(
@@ -241,11 +278,9 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
                   disabledBackgroundColor: Colors.white24,
                   disabledForegroundColor: Colors.white70,
                 ),
-                onPressed: _image == null
-                    ? null
-                    : () => Navigator.pop(context, _transform),
+                onPressed: _image == null || _saving ? null : _savePicture,
                 icon: const Icon(Icons.check),
-                label: const Text('Save picture'),
+                label: Text(_saving ? 'Saving picture…' : 'Save picture'),
               ),
             ),
           ),
