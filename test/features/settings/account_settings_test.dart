@@ -350,6 +350,27 @@ void main() {
     await tester.pumpAndSettle();
     final shapeToggle = find.byKey(const Key('profile-preview-shape-toggle'));
     expect(tester.getTopLeft(shapeToggle).dy, greaterThanOrEqualTo(56));
+    expect(tester.getCenter(shapeToggle).dx, closeTo(180, 1));
+    final shapeDecoration =
+        tester
+                .widget<AnimatedContainer>(
+                  find.descendant(
+                    of: shapeToggle,
+                    matching: find.byType(AnimatedContainer),
+                  ),
+                )
+                .decoration!
+            as BoxDecoration;
+    expect(shapeDecoration.color, isNull);
+    expect(shapeDecoration.border!.top.color, Colors.white);
+    expect(
+      tester.getBottomLeft(shapeToggle).dy,
+      lessThan(
+        tester
+            .getTopLeft(find.byKey(const Key('profile-picture-gesture-area')))
+            .dy,
+      ),
+    );
     await tester.tap(shapeToggle);
     await tester.pumpAndSettle();
     expect(

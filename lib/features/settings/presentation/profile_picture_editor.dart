@@ -152,7 +152,7 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: LayoutBuilder(
               builder: (context, constraints) => SizedBox(
                 height: 48,
@@ -169,8 +169,8 @@ class _ProfilePictureEditorState extends State<ProfilePictureEditor> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          constraints.maxWidth < 500
-                              ? 'Picture'
+                          constraints.maxWidth < 620
+                              ? 'Edit'
                               : 'Edit profile picture',
                           style: const TextStyle(
                             color: Colors.white,

@@ -19,10 +19,11 @@ Controls repaint as values change; preference writes are grouped after a short
 pause in dragging. Edit picture sits beside Replace picture in the profile
 dialog, while the display name waits for a deliberate tap. The picture editor
 supports drag, pinch zoom, pinch rotation, quarter-turn rotation, flips, and
-reset. A small white shape button switches between the circular avatar and the
-full square upload, with an animated preview change. It sits within the system
-safe area so phone camera cutouts do not cover its touch target. A blur switch
-appears only when the framing exposes space or the source has transparency.
+reset. A small white outlined shape button in the top bar switches between the
+circular avatar and the full square upload, with an animated preview change.
+It sits within the system safe area so phone camera cutouts do not cover its
+touch target. A blur switch appears only when the framing exposes space or the
+source has transparency.
 PNGs and other transparent images leave that space transparent by default;
 turning blur on fills it with a softened copy of the source. Opaque non-PNG
 images keep Trace's blurred default when space is exposed.
