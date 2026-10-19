@@ -135,14 +135,17 @@ final class MatrixRecoveryState {
     required this.keyBackupEnabled,
     required this.crossSigningEnabled,
     required this.connected,
+    this.secretStorageConfigured = false,
   });
 
   final bool keyBackupEnabled;
   final bool crossSigningEnabled;
   final bool connected;
+  final bool secretStorageConfigured;
 
   bool get initialized => keyBackupEnabled && crossSigningEnabled;
-  bool get unconfigured => !keyBackupEnabled && !crossSigningEnabled;
+  bool get unconfigured =>
+      !secretStorageConfigured && !keyBackupEnabled && !crossSigningEnabled;
 }
 
 abstract interface class MatrixTimelinePort {

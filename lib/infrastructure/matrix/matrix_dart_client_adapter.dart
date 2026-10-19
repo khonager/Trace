@@ -455,6 +455,7 @@ final class MatrixDartClientAdapter
       keyBackupEnabled: state.keyBackupEnabled,
       crossSigningEnabled: state.crossSigningEnabled,
       connected: state.connected,
+      secretStorageConfigured: _client.encryption?.ssss.defaultKeyId != null,
     );
   }
 

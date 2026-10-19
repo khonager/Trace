@@ -74,6 +74,7 @@ void main() {
     await tester.tap(find.text('Set up encryption recovery'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'long recovery phrase');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('secret-dialog-action')));
     await tester.pumpAndSettle();
 
@@ -105,6 +106,7 @@ void main() {
     await tester.tap(find.text('Restore encryption keys'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'saved recovery key');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('secret-dialog-action')));
     await tester.pumpAndSettle();
 
