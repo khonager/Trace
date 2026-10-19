@@ -11,6 +11,39 @@ import 'package:trace/features/chat/presentation/chats_page.dart';
 import 'package:trace/features/settings/application/appearance_settings.dart';
 
 void main() {
+  testWidgets('long chat names expand in the open chat header', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 700);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    const name = 'A very long chat name that should be readable in full';
+    final client = _TimelineSpyClient([_room(id: 'long', name: name)]);
+    addTearDown(client.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ChatsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('conversation-row-0')));
+    await tester.pumpAndSettle();
+
+    final title = find.byKey(const Key('conversation-title-long'));
+    final toggle = find.byKey(const Key('conversation-title-toggle-long'));
+    expect(tester.widget<Text>(title).maxLines, 1);
+    expect(toggle, findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(tester.widget<Text>(title).maxLines, isNull);
+    expect(tester.widget<Text>(title).data, name);
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(tester.widget<Text>(title).maxLines, 1);
+  });
+
   testWidgets('separate groups shows a groups-only chat tab', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final appearance = AppearanceSettings();

@@ -2506,15 +2506,9 @@ class _ConversationView extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        conversation.name,
-                        key: Key('conversation-title-${conversation.id}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      _ExpandableConversationTitle(
+                        key: ValueKey('expandable-title-${conversation.id}'),
+                        conversation: conversation,
                       ),
                       Row(
                         children: [
@@ -2525,12 +2519,16 @@ class _ConversationView extends StatelessWidget {
                             size: 12,
                           ),
                           const SizedBox(width: 3),
-                          Text(
-                            conversation.typingLabel ??
-                                (conversation.encrypted
-                                    ? 'Encrypted'
-                                    : 'Not encrypted'),
-                            style: const TextStyle(fontSize: 11),
+                          Flexible(
+                            child: Text(
+                              conversation.typingLabel ??
+                                  (conversation.encrypted
+                                      ? 'Encrypted'
+                                      : 'Not encrypted'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11),
+                            ),
                           ),
                         ],
                       ),
@@ -2732,6 +2730,82 @@ class _ManualBackgroundReveal extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ExpandableConversationTitle extends StatefulWidget {
+  const _ExpandableConversationTitle({super.key, required this.conversation});
+
+  final _Conversation conversation;
+
+  @override
+  State<_ExpandableConversationTitle> createState() =>
+      _ExpandableConversationTitleState();
+}
+
+class _ExpandableConversationTitleState
+    extends State<_ExpandableConversationTitle> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _ExpandableConversationTitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversation.name != widget.conversation.name) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 17, fontWeight: FontWeight.w600);
+    final name = widget.conversation.name;
+    final titleKey = Key('conversation-title-${widget.conversation.id}');
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: name, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout(maxWidth: constraints.maxWidth);
+        final truncated = painter.didExceedMaxLines;
+        painter.dispose();
+
+        if (!truncated) {
+          return Text(name, key: titleKey, style: style);
+        }
+
+        return Semantics(
+          button: true,
+          label: name,
+          hint: _expanded ? 'Collapse chat name' : 'Expand chat name',
+          child: Tooltip(
+            message: _expanded ? 'Collapse chat name' : 'Show full chat name',
+            child: InkWell(
+              key: Key('conversation-title-toggle-${widget.conversation.id}'),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      name,
+                      key: titleKey,
+                      maxLines: _expanded ? null : 1,
+                      overflow: _expanded ? null : TextOverflow.ellipsis,
+                      style: style,
+                    ),
+                  ),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
