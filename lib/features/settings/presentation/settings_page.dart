@@ -135,28 +135,10 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.key_outlined),
-                  title: const Text('Set up encryption recovery'),
-                  subtitle: const Text(
-                    'Create cross-signing and an online key backup.',
-                  ),
-                  onTap: () => _initializeRecovery(context),
-                ),
-                const Divider(),
-                ListTile(
-                  leading: const Icon(Icons.restore_outlined),
-                  title: const Text('Restore encryption keys'),
-                  subtitle: const Text(
-                    'Use a recovery key or recovery passphrase.',
-                  ),
-                  onTap: () => _restoreRecovery(context),
-                ),
-              ],
-            ),
+          _EncryptionRecoveryCard(
+            client: controller!.client,
+            onInitialize: () => _initializeRecovery(context),
+            onRestore: () => _restoreRecovery(context),
           ),
           const SizedBox(height: 12),
           Card(
@@ -263,6 +245,7 @@ class SettingsPage extends StatelessWidget {
       context,
       title: 'Set recovery passphrase',
       action: 'Create recovery',
+      labelText: 'Recovery passphrase',
     );
     if (passphrase == null || !context.mounted) return;
     try {
@@ -274,7 +257,17 @@ class SettingsPage extends StatelessWidget {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Save this recovery key'),
-          content: SelectableText(recoveryKey),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Store this key outside this device. You can use it or your passphrase to restore backed-up messages after reinstalling, even if your other devices are lost.',
+              ),
+              const SizedBox(height: 16),
+              SelectableText(recoveryKey),
+            ],
+          ),
           actions: [
             FilledButton(
               onPressed: () => Navigator.pop(context),
@@ -1138,6 +1131,112 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
       }
     }
   }
+}
+
+class _EncryptionRecoveryCard extends StatefulWidget {
+  const _EncryptionRecoveryCard({
+    required this.client,
+    required this.onInitialize,
+    required this.onRestore,
+  });
+
+  final MatrixClientPort client;
+  final Future<void> Function() onInitialize;
+  final Future<void> Function() onRestore;
+
+  @override
+  State<_EncryptionRecoveryCard> createState() =>
+      _EncryptionRecoveryCardState();
+}
+
+class _EncryptionRecoveryCardState extends State<_EncryptionRecoveryCard> {
+  late Future<MatrixRecoveryState> _state = _load();
+  bool _busy = false;
+
+  Future<MatrixRecoveryState> _load() {
+    final client = widget.client;
+    if (client is MatrixRecoveryPort) {
+      return (client as MatrixRecoveryPort).getRecoveryState();
+    }
+    return Future.error(StateError('Recovery status is unavailable.'));
+  }
+
+  @override
+  void didUpdateWidget(covariant _EncryptionRecoveryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.client != widget.client) _state = _load();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _state = _load();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: FutureBuilder<MatrixRecoveryState>(
+      future: _state,
+      builder: (context, snapshot) {
+        final state = snapshot.data;
+        final loading = snapshot.connectionState != ConnectionState.done;
+        final unconfigured = state?.unconfigured == true;
+        final ready = state?.initialized == true && state?.connected == true;
+        final restore = state?.initialized == true && !ready;
+        final subtitle = loading
+            ? 'Checking encryption recovery…'
+            : snapshot.hasError
+            ? 'Could not check recovery. Tap to retry.'
+            : unconfigured
+            ? 'Set up a backup before you lose access to this device.'
+            : ready
+            ? 'Ready on this device. Keep your recovery key or passphrase somewhere safe.'
+            : restore
+            ? 'Restore with your recovery key or passphrase to read backed-up messages.'
+            : 'Recovery is only partly configured. Existing keys must be preserved.';
+        return ListTile(
+          key: const Key('encryption-recovery-status'),
+          leading: Icon(
+            ready ? Icons.verified_user_outlined : Icons.key_outlined,
+          ),
+          title: Text(
+            unconfigured
+                ? 'Set up encryption recovery'
+                : restore
+                ? 'Restore encryption keys'
+                : 'Encryption recovery',
+          ),
+          subtitle: Text(subtitle),
+          trailing: loading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : unconfigured || restore || snapshot.hasError
+              ? const Icon(Icons.chevron_right)
+              : null,
+          onTap: _busy || loading
+              ? null
+              : snapshot.hasError
+              ? () => setState(() => _state = _load())
+              : unconfigured
+              ? () => _run(widget.onInitialize)
+              : restore
+              ? () => _run(widget.onRestore)
+              : null,
+        );
+      },
+    ),
+  );
 }
 
 class _SecretDialog extends StatefulWidget {

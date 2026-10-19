@@ -125,6 +125,26 @@ abstract interface class MatrixAccountManagementPort {
   Future<void> removeDevice(String deviceId, {String? password});
 }
 
+/// Account-wide key backup and this session's access to it.
+abstract interface class MatrixRecoveryPort {
+  Future<MatrixRecoveryState> getRecoveryState();
+}
+
+final class MatrixRecoveryState {
+  const MatrixRecoveryState({
+    required this.keyBackupEnabled,
+    required this.crossSigningEnabled,
+    required this.connected,
+  });
+
+  final bool keyBackupEnabled;
+  final bool crossSigningEnabled;
+  final bool connected;
+
+  bool get initialized => keyBackupEnabled && crossSigningEnabled;
+  bool get unconfigured => !keyBackupEnabled && !crossSigningEnabled;
+}
+
 abstract interface class MatrixTimelinePort {
   List<MatrixMessage> get current;
 

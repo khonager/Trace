@@ -59,6 +59,60 @@ void main() {
     expect(client.updatedDisplayName, 'New name');
   });
 
+  testWidgets('recovery setup creates a key and then cannot reset it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsPage(controller: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('encryption-recovery-status')),
+    );
+    await tester.tap(find.text('Set up encryption recovery'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'long recovery phrase');
+    await tester.tap(find.byKey(const Key('secret-dialog-action')));
+    await tester.pumpAndSettle();
+
+    expect(client.createdPassphrase, 'long recovery phrase');
+    expect(find.text('Save this recovery key'), findsOneWidget);
+    await tester.tap(find.text('I saved it'));
+    await tester.pumpAndSettle();
+    expect(find.text('Encryption recovery'), findsOneWidget);
+    expect(client.createdPassphrase, 'long recovery phrase');
+  });
+
+  testWidgets('new session offers recovery without another device', (
+    tester,
+  ) async {
+    client.recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: false,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsPage(controller: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('encryption-recovery-status')),
+    );
+    await tester.tap(find.text('Restore encryption keys'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'saved recovery key');
+    await tester.tap(find.byKey(const Key('secret-dialog-action')));
+    await tester.pumpAndSettle();
+
+    expect(client.restoredSecret, 'saved recovery key');
+    expect(client.createdPassphrase, isNull);
+    expect(find.text('Encryption recovery'), findsOneWidget);
+  });
+
   testWidgets('another session can be removed after password confirmation', (
     tester,
   ) async {
@@ -566,7 +620,43 @@ class _TestProfileImageStore extends ProfileImageStore {
 }
 
 final class _AccountClient
-    implements MatrixClientPort, MatrixAccountManagementPort {
+    implements
+        MatrixClientPort,
+        MatrixAccountManagementPort,
+        MatrixRecoveryPort {
+  MatrixRecoveryState recoveryState = const MatrixRecoveryState(
+    keyBackupEnabled: false,
+    crossSigningEnabled: false,
+    connected: false,
+  );
+  String? createdPassphrase;
+  String? restoredSecret;
+
+  @override
+  Future<MatrixRecoveryState> getRecoveryState() async => recoveryState;
+
+  @override
+  Future<String> initializeRecovery(String passphrase) async {
+    if (!recoveryState.unconfigured) throw StateError('Already configured');
+    createdPassphrase = passphrase;
+    recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: true,
+    );
+    return 'example recovery key';
+  }
+
+  @override
+  Future<void> restoreRecovery(String secret) async {
+    restoredSecret = secret;
+    recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: true,
+    );
+  }
+
   Uri? avatarUri;
   int thumbnailRequests = 0;
   int originalRequests = 0;

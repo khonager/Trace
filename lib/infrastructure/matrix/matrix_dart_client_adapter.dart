@@ -32,7 +32,10 @@ matrix.Client createMatrixDartClient({
 }
 
 final class MatrixDartClientAdapter
-    implements MatrixClientPort, MatrixAccountManagementPort {
+    implements
+        MatrixClientPort,
+        MatrixAccountManagementPort,
+        MatrixRecoveryPort {
   MatrixDartClientAdapter(this._client);
 
   final matrix.Client _client;
@@ -433,7 +436,27 @@ final class MatrixDartClientAdapter
 
   @override
   Future<String> initializeRecovery(String passphrase) =>
-      _client.initCryptoIdentity(passphrase: passphrase);
+      _initializeRecoveryIfUnconfigured(passphrase);
+
+  Future<String> _initializeRecoveryIfUnconfigured(String passphrase) async {
+    final state = await getRecoveryState();
+    if (!state.unconfigured) {
+      throw StateError(
+        'Encryption recovery already exists. Restore it instead of replacing it.',
+      );
+    }
+    return _client.initCryptoIdentity(passphrase: passphrase);
+  }
+
+  @override
+  Future<MatrixRecoveryState> getRecoveryState() async {
+    final state = await _client.getCryptoIdentityState();
+    return MatrixRecoveryState(
+      keyBackupEnabled: state.keyBackupEnabled,
+      crossSigningEnabled: state.crossSigningEnabled,
+      connected: state.connected,
+    );
+  }
 
   @override
   Future<void> restoreRecovery(String passphraseOrRecoveryKey) async {
