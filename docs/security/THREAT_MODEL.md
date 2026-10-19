@@ -42,6 +42,14 @@ This document is groundwork, not a completed security review.
 
 ## Explicit non-guarantees
 
+- Replacing a lost Matrix recovery key can back up only room keys already held
+  locally by the device doing the replacement. It cannot decrypt keys held only
+  in the previous backup. The replacement also rotates the account's
+  cross-signing identity and may require other devices and contacts to verify
+  it again. Trace requires at least one local room key and an explicit warning
+  before offering this reset.
+- Security questions are not a recovery mechanism for encryption keys. Their
+  answers are too easy to guess or discover and cannot reconstruct a lost key.
 - Redacting a federated Matrix event cannot prove deletion from every remote
   server, backup, screenshot, or previously downloaded client.
 - A chat-export disclaimer does not prevent a recipient from misusing exported

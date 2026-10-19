@@ -59,32 +59,37 @@ void main() {
     expect(client.updatedDisplayName, 'New name');
   });
 
-  testWidgets('recovery setup creates a key and then cannot reset it', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: SettingsPage(controller: controller)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.byKey(const Key('encryption-recovery-status')),
-    );
-    await tester.tap(find.text('Set up encryption recovery'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'long recovery phrase');
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('secret-dialog-action')));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'recovery setup creates a key and offers a separate replacement',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: SettingsPage(controller: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('encryption-recovery-status')),
+      );
+      await tester.tap(find.text('Set up encryption recovery'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField).last,
+        'long recovery phrase',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('secret-dialog-action')));
+      await tester.pumpAndSettle();
 
-    expect(client.createdPassphrase, 'long recovery phrase');
-    expect(find.text('Save this recovery key'), findsOneWidget);
-    await tester.tap(find.text('I saved it'));
-    await tester.pumpAndSettle();
-    expect(find.text('Encryption recovery'), findsOneWidget);
-    expect(client.createdPassphrase, 'long recovery phrase');
-  });
+      expect(client.createdPassphrase, 'long recovery phrase');
+      expect(find.text('Save this recovery key'), findsOneWidget);
+      await tester.tap(find.text('I saved it'));
+      await tester.pumpAndSettle();
+      expect(find.text('Encryption recovery'), findsOneWidget);
+      expect(client.createdPassphrase, 'long recovery phrase');
+      expect(find.byKey(const Key('replace-recovery-button')), findsOneWidget);
+    },
+  );
 
   testWidgets('new session offers recovery without another device', (
     tester,
@@ -113,6 +118,70 @@ void main() {
     expect(client.restoredSecret, 'saved recovery key');
     expect(client.createdPassphrase, isNull);
     expect(find.text('Encryption recovery'), findsOneWidget);
+  });
+
+  testWidgets('lost key can be replaced from local message keys', (
+    tester,
+  ) async {
+    client.recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: false,
+    );
+    client.localRoomKeyCount = 3;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsPage(controller: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('replace-recovery-button')),
+    );
+    await tester.tap(find.byKey(const Key('replace-recovery-button')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('3 local message keys'), findsOneWidget);
+    expect(client.replacedPassphrase, isNull);
+
+    await tester.tap(find.byKey(const Key('confirm-replace-recovery')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'new recovery phrase');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('secret-dialog-action')));
+    await tester.pumpAndSettle();
+
+    expect(client.replacedPassphrase, 'new recovery phrase');
+    expect(find.text('Save this recovery key'), findsOneWidget);
+  });
+
+  testWidgets('replacement is blocked without local message keys', (
+    tester,
+  ) async {
+    client.recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: false,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsPage(controller: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('replace-recovery-button')),
+    );
+    await tester.tap(find.byKey(const Key('replace-recovery-button')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('confirm-replace-recovery')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(client.replacedPassphrase, isNull);
   });
 
   testWidgets('another session can be removed after password confirmation', (
@@ -633,9 +702,26 @@ final class _AccountClient
   );
   String? createdPassphrase;
   String? restoredSecret;
+  String? replacedPassphrase;
+  int localRoomKeyCount = 0;
 
   @override
   Future<MatrixRecoveryState> getRecoveryState() async => recoveryState;
+
+  @override
+  Future<int> getLocalRoomKeyCount() async => localRoomKeyCount;
+
+  @override
+  Future<String> replaceRecovery(String passphrase) async {
+    if (localRoomKeyCount == 0) throw StateError('No local keys');
+    replacedPassphrase = passphrase;
+    recoveryState = const MatrixRecoveryState(
+      keyBackupEnabled: true,
+      crossSigningEnabled: true,
+      connected: true,
+    );
+    return 'new recovery key';
+  }
 
   @override
   Future<String> initializeRecovery(String passphrase) async {

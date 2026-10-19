@@ -139,6 +139,7 @@ class SettingsPage extends StatelessWidget {
             client: controller!.client,
             onInitialize: () => _initializeRecovery(context),
             onRestore: () => _restoreRecovery(context),
+            onReplace: () => _replaceRecovery(context),
           ),
           const SizedBox(height: 12),
           Card(
@@ -253,33 +254,85 @@ class SettingsPage extends StatelessWidget {
         passphrase,
       );
       if (!context.mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Save this recovery key'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Store this key outside this device. You can use it or your passphrase to restore backed-up messages after reinstalling, even if your other devices are lost.',
-              ),
-              const SizedBox(height: 16),
-              SelectableText(recoveryKey),
-            ],
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('I saved it'),
-            ),
-          ],
-        ),
-      );
+      await _showRecoveryKey(context, recoveryKey);
     } catch (error) {
       if (context.mounted) _showError(context, error);
     }
   }
+
+  Future<void> _replaceRecovery(BuildContext context) async {
+    final client = controller!.client;
+    if (client is! MatrixRecoveryPort) return;
+    final recovery = client as MatrixRecoveryPort;
+    try {
+      final localKeyCount = await recovery.getLocalRoomKeyCount();
+      if (!context.mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Replace encryption recovery?'),
+          content: Text(
+            'This device has $localKeyCount local message ${localKeyCount == 1 ? 'key' : 'keys'} that can be copied to a new backup. '
+            'Messages whose keys exist only in the old backup cannot be recovered without the old key or passphrase. '
+            'Replacing recovery also changes your Matrix encryption identity, so other devices and contacts may need to verify you again. '
+            'Use another device that can read more of your history first, if you have one.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('confirm-replace-recovery'),
+              onPressed: localKeyCount == 0
+                  ? null
+                  : () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      final passphrase = await _askSecret(
+        context,
+        title: 'Set a new recovery passphrase',
+        action: 'Replace recovery',
+        labelText: 'New recovery passphrase',
+      );
+      if (passphrase == null || !context.mounted) return;
+      final recoveryKey = await recovery.replaceRecovery(passphrase);
+      if (context.mounted) await _showRecoveryKey(context, recoveryKey);
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _showRecoveryKey(
+    BuildContext context,
+    String recoveryKey,
+  ) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Save this recovery key'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Store this key outside this device. You can use it or your passphrase to restore backed-up messages after reinstalling, even if your other devices are lost.',
+          ),
+          const SizedBox(height: 16),
+          SelectableText(recoveryKey),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('I saved it'),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _copyUserId(BuildContext context, String userId) async {
     await Clipboard.setData(ClipboardData(text: userId));
@@ -1138,11 +1191,13 @@ class _EncryptionRecoveryCard extends StatefulWidget {
     required this.client,
     required this.onInitialize,
     required this.onRestore,
+    required this.onReplace,
   });
 
   final MatrixClientPort client;
   final Future<void> Function() onInitialize;
   final Future<void> Function() onRestore;
+  final Future<void> Function() onReplace;
 
   @override
   State<_EncryptionRecoveryCard> createState() =>
@@ -1202,37 +1257,56 @@ class _EncryptionRecoveryCardState extends State<_EncryptionRecoveryCard> {
             : restore
             ? 'Restore with your recovery key or passphrase to read backed-up messages.'
             : 'Recovery is only partly configured. Existing keys must be preserved.';
-        return ListTile(
-          key: const Key('encryption-recovery-status'),
-          leading: Icon(
-            ready ? Icons.verified_user_outlined : Icons.key_outlined,
-          ),
-          title: Text(
-            unconfigured
-                ? 'Set up encryption recovery'
-                : restore
-                ? 'Restore encryption keys'
-                : 'Encryption recovery',
-          ),
-          subtitle: Text(subtitle),
-          trailing: loading
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : unconfigured || restore || snapshot.hasError
-              ? const Icon(Icons.chevron_right)
-              : null,
-          onTap: _busy || loading
-              ? null
-              : snapshot.hasError
-              ? () => setState(() => _state = _load())
-              : unconfigured
-              ? () => _run(widget.onInitialize)
-              : restore
-              ? () => _run(widget.onRestore)
-              : null,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              key: const Key('encryption-recovery-status'),
+              leading: Icon(
+                ready ? Icons.verified_user_outlined : Icons.key_outlined,
+              ),
+              title: Text(
+                unconfigured
+                    ? 'Set up encryption recovery'
+                    : restore
+                    ? 'Restore encryption keys'
+                    : 'Encryption recovery',
+              ),
+              subtitle: Text(subtitle),
+              trailing: loading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : unconfigured || restore || snapshot.hasError
+                  ? const Icon(Icons.chevron_right)
+                  : null,
+              onTap: _busy || loading
+                  ? null
+                  : snapshot.hasError
+                  ? () => setState(() => _state = _load())
+                  : unconfigured
+                  ? () => _run(widget.onInitialize)
+                  : restore
+                  ? () => _run(widget.onRestore)
+                  : null,
+            ),
+            if (state?.initialized == true) ...[
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.only(left: 56, right: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('replace-recovery-button'),
+                    onPressed: _busy ? null : () => _run(widget.onReplace),
+                    child: const Text('Lost your key? Replace recovery'),
+                  ),
+                ),
+              ),
+            ],
+          ],
         );
       },
     ),

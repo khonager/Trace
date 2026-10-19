@@ -128,6 +128,13 @@ abstract interface class MatrixAccountManagementPort {
 /// Account-wide key backup and this session's access to it.
 abstract interface class MatrixRecoveryPort {
   Future<MatrixRecoveryState> getRecoveryState();
+
+  /// Keys this installation can upload into a replacement backup.
+  Future<int> getLocalRoomKeyCount();
+
+  /// Replaces the account recovery identity and backup using local room keys.
+  /// This cannot recover keys held only by the previous backup.
+  Future<String> replaceRecovery(String passphrase);
 }
 
 final class MatrixRecoveryState {

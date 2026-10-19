@@ -460,6 +460,26 @@ final class MatrixDartClientAdapter
   }
 
   @override
+  Future<int> getLocalRoomKeyCount() async =>
+      (await _client.database.getAllInboundGroupSessions()).length;
+
+  @override
+  Future<String> replaceRecovery(String passphrase) async {
+    final state = await getRecoveryState();
+    if (!state.initialized) {
+      throw StateError('Recovery is not fully configured.');
+    }
+    if (await getLocalRoomKeyCount() == 0) {
+      throw StateError(
+        'This device has no local message keys to preserve. Use a device that can read your messages.',
+      );
+    }
+    // The SDK creates a new backup, marks every local room key for upload,
+    // and waits for that upload before returning the new recovery key.
+    return _client.initCryptoIdentity(passphrase: passphrase);
+  }
+
+  @override
   Future<void> restoreRecovery(String passphraseOrRecoveryKey) async {
     await _client.restoreCryptoIdentity(passphraseOrRecoveryKey);
     await _requestMissingKeysForOpenTimelines();
