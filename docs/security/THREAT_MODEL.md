@@ -55,3 +55,8 @@ This document is groundwork, not a completed security review.
 - A chat-export disclaimer does not prevent a recipient from misusing exported
   content.
 - A compromised endpoint can read content available to that endpoint.
+
+## Local UI locks
+
+See [optional app and chat locks](APP_LOCK.md) for scope, storage, and limitations.
+These gates do not add database encryption or an OS screenshot guarantee.

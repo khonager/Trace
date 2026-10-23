@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock Trace or protected chats with Face ID.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose a photo to send in a chat.</string>
 	<key>UIApplicationSceneManifest</key>

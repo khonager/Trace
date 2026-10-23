@@ -1,3 +1,4 @@
+import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -51,6 +52,7 @@ class SettingsPage extends StatelessWidget {
         const Icon(Icons.settings_outlined, size: 28),
         const SizedBox(height: 20),
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
+        const LockSettingsTile(),
         const SizedBox(height: 24),
         if (account == null)
           const Text(

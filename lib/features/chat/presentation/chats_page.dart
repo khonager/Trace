@@ -1,3 +1,4 @@
+import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -1911,7 +1912,10 @@ class _ConversationRow extends StatelessWidget {
                       SizedBox(
                         width: 72,
                         child: Text(
-                          conversation.time,
+                          LockScope.of(context)?.enabled(conversation.id) ==
+                                  true
+                              ? ''
+                              : conversation.time,
                           key: Key('conversation-time-${conversation.id}'),
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
@@ -1953,7 +1957,10 @@ class _ConversationRow extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              conversation.preview,
+                              LockScope.of(context)?.enabled(conversation.id) ==
+                                      true
+                                  ? 'Locked chat'
+                                  : conversation.preview,
                               key: Key(
                                 'conversation-preview-${conversation.id}',
                               ),
@@ -2438,7 +2445,12 @@ class _ConversationView extends StatelessWidget {
   final double? swipeBackgroundProgress;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ChatLockGuard(
+    id: conversation.id,
+    child: Builder(builder: _buildUnlocked),
+  );
+
+  Widget _buildUnlocked(BuildContext context) {
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: Column(
@@ -2447,6 +2459,12 @@ class _ConversationView extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
             child: Row(
               children: [
+                if (LockScope.of(context) case final locks?)
+                  IconButton(
+                    tooltip: 'Chat lock',
+                    icon: const Icon(Icons.lock_outline),
+                    onPressed: () => editLock(context, locks, conversation.id),
+                  ),
                 if (showMobileRailToggle)
                   IconButton(
                     key: const Key('mobile-chat-rail-toggle'),
@@ -4975,10 +4993,14 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final locks = LockScope.of(context);
     final query = _controller.text.trim().toLowerCase();
     final rooms = query.isEmpty
         ? widget.conversations
         : widget.conversations.where((room) {
+            if (locks?.enabled(room.id) == true) {
+              return room.name.toLowerCase().contains(query);
+            }
             return room.name.toLowerCase().contains(query) ||
                 room.preview.toLowerCase().contains(query) ||
                 room.messages.any(
@@ -5020,7 +5042,9 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
                         leading: const Icon(Icons.chat_bubble_outline),
                         title: Text(room.name),
                         subtitle: Text(
-                          room.preview,
+                          locks?.enabled(room.id) == true
+                              ? 'Locked chat'
+                              : room.preview,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -5044,7 +5068,9 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
                   ],
                   if (_messageResults.isNotEmpty) ...[
                     const _SearchSectionLabel('Cached messages'),
-                    for (final result in _messageResults)
+                    for (final result in _messageResults.where(
+                      (result) => locks?.enabled(result.roomId) != true,
+                    ))
                       ListTile(
                         leading: const Icon(Icons.message_outlined),
                         title: Text(result.roomName),

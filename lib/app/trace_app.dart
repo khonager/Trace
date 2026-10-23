@@ -1,3 +1,4 @@
+import 'package:trace/features/lock/lock_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/app/trace_home_shell.dart';
@@ -88,9 +89,11 @@ class TraceApp extends StatelessWidget {
       ),
       builder: controller == null
           ? null
-          : (context, child) => MatrixVerificationOverlay(
-              controller: controller!,
-              child: child ?? const SizedBox.shrink(),
+          : (context, child) => LockHost(
+              child: MatrixVerificationOverlay(
+                controller: controller!,
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
       home: controller == null
           ? const TraceHomeShell()
