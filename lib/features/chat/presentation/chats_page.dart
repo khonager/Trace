@@ -8,6 +8,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../application/pending_attachments.dart';
+import '../application/profile_history.dart';
+import 'profile_history_dialog.dart';
 import '../application/clipboard_attachments.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
@@ -72,6 +74,7 @@ class ChatsPage extends StatefulWidget {
 }
 
 class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
+  late final ProfileHistoryStore _profileHistory;
   final PendingAttachments _pendingAttachments = PendingAttachments();
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _overviewScrollController = ScrollController();
@@ -118,7 +121,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         widget.composerActionPinStore ??
         SharedPreferencesComposerActionPinStore();
     unawaited(_loadPinnedComposerActions());
+    _profileHistory = ProfileHistoryStore(
+      account: widget.client?.current.account?.userId ?? 'demo',
+    );
     _allRooms = widget.client?.current.rooms ?? const [];
+    unawaited(_observeProfiles(_allRooms));
     _spaceOrder = widget.client?.current.spaceOrder ?? const [];
     _conversations = widget.client == null
         ? _mockConversations()
@@ -130,6 +137,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       if (!mounted) return;
       _spaceOrder = snapshot.spaceOrder;
       _applyRooms(snapshot.rooms);
+      unawaited(_observeProfiles(snapshot.rooms));
     });
     _workspaceTransition = AnimationController(
       vsync: this,
@@ -143,6 +151,52 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
+  }
+
+  Future<void> _observeProfiles(List<MatrixRoom> rooms) async {
+    try {
+      await _profileHistory.ready;
+      for (final room in rooms) {
+        if (room.isDirect && room.directUserId != null) {
+          await _profileHistory.observe(
+            room.directUserId!,
+            room.name,
+            room.avatarMediaUri,
+          );
+        }
+      }
+    } catch (_) {
+      // The history dialog exposes storage failures without blocking chat sync.
+    }
+  }
+
+  Future<void> _showProfileHistory() async {
+    final conversation = _conversations[_activeConversation];
+    final matches = _allRooms.where((room) => room.id == conversation.id);
+    final room = matches.isEmpty ? null : matches.first;
+    final user = room?.directUserId;
+    if (user == null) return;
+    try {
+      await _profileHistory.ready;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => ProfileHistoryDialog(
+          store: _profileHistory,
+          user: user,
+          name: room!.name,
+          avatar: room.avatarMediaUri,
+          onOpenPicture: (entry) =>
+              _showProfilePicture(name: entry.name, mediaUri: entry.avatar),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load profile history.')),
+        );
+      }
+    }
   }
 
   Future<void> _loadPinnedComposerActions() async {
@@ -199,6 +253,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     unawaited(_clientSubscription?.cancel());
     _typingStopTimer?.cancel();
     _pendingAttachments.dispose();
+    _profileHistory.dispose();
     for (final subscription in _timelineSubscriptions.values) {
       unawaited(subscription.cancel());
     }
@@ -1426,6 +1481,15 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onTogglePinned: widget.client == null
                   ? null
                   : () => _togglePinned(_conversations[_activeConversation]),
+              onProfileHistory:
+                  _allRooms.any(
+                    (room) =>
+                        room.id == _conversations[_activeConversation].id &&
+                        room.isDirect &&
+                        room.directUserId != null,
+                  )
+                  ? _showProfileHistory
+                  : null,
               onLeave: widget.client == null ? null : _leaveCurrentRoom,
               replyLabel: _replyToLabel,
               attachmentBusy: _attachmentBusy,
@@ -1588,6 +1652,16 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                             : () => _togglePinned(
                                 _conversations[_activeConversation],
                               ),
+                        onProfileHistory:
+                            _allRooms.any(
+                              (room) =>
+                                  room.id ==
+                                      _conversations[_activeConversation].id &&
+                                  room.isDirect &&
+                                  room.directUserId != null,
+                            )
+                            ? _showProfileHistory
+                            : null,
                         onLeave: widget.client == null
                             ? null
                             : _leaveCurrentRoom,
@@ -2136,6 +2210,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onOpenReply,
     required this.onTogglePinned,
     required this.onLeave,
+    required this.onProfileHistory,
     required this.replyLabel,
     required this.attachmentBusy,
     required this.onCancelReply,
@@ -2175,6 +2250,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
+  final VoidCallback? onProfileHistory;
   final String? replyLabel;
   final bool attachmentBusy;
   final VoidCallback onCancelReply;
@@ -2215,6 +2291,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onOpenReply: onOpenReply,
         onTogglePinned: onTogglePinned,
         onLeave: onLeave,
+        onProfileHistory: onProfileHistory,
         replyLabel: replyLabel,
         attachmentBusy: attachmentBusy,
         onCancelReply: onCancelReply,
@@ -2451,6 +2528,7 @@ class _ConversationView extends StatelessWidget {
     required this.onOpenReply,
     required this.onTogglePinned,
     required this.onLeave,
+    required this.onProfileHistory,
     required this.replyLabel,
     required this.attachmentBusy,
     required this.onCancelReply,
@@ -2489,6 +2567,7 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<String> onOpenReply;
   final VoidCallback? onTogglePinned;
   final VoidCallback? onLeave;
+  final VoidCallback? onProfileHistory;
   final String? replyLabel;
   final bool attachmentBusy;
   final VoidCallback onCancelReply;
@@ -2611,15 +2690,27 @@ class _ConversationView extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (onTogglePinned != null || onLeave != null)
+                if (onTogglePinned != null ||
+                    onLeave != null ||
+                    onProfileHistory != null)
                   PopupMenuButton<String>(
                     key: Key('room-actions-${conversation.id}'),
                     tooltip: 'Room actions',
                     onSelected: (value) {
+                      if (value == 'history') onProfileHistory?.call();
                       if (value == 'pin') onTogglePinned?.call();
                       if (value == 'leave') onLeave!();
                     },
                     itemBuilder: (context) => [
+                      if (onProfileHistory != null)
+                        const PopupMenuItem(
+                          value: 'history',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.history),
+                            title: Text('Profile history'),
+                          ),
+                        ),
                       if (onTogglePinned != null)
                         PopupMenuItem(
                           value: 'pin',
