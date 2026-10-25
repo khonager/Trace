@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show KeyboardInsertedContent, rootBundle;
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
+import 'package:trace/features/chat/presentation/typing_bubble.dart';
 import 'package:trace/features/chat/application/composer_actions.dart';
 import 'package:trace/features/chat/application/configured_media_search_client.dart';
 import 'package:trace/features/chat/application/media_favorites.dart';
@@ -2556,10 +2557,9 @@ class _ConversationView extends StatelessWidget {
                           const SizedBox(width: 3),
                           Flexible(
                             child: Text(
-                              conversation.typingLabel ??
-                                  (conversation.encrypted
-                                      ? 'Encrypted'
-                                      : 'Not encrypted'),
+                              conversation.encrypted
+                                  ? 'Encrypted'
+                                  : 'Not encrypted',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11),
@@ -2666,8 +2666,15 @@ class _ConversationView extends StatelessWidget {
                   child: ListView.builder(
                     reverse: true,
                     padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-                    itemCount: conversation.messages.length,
+                    itemCount:
+                        conversation.messages.length +
+                        (conversation.typingLabel == null ? 0 : 1),
                     itemBuilder: (context, reverseIndex) {
+                      if (conversation.typingLabel != null) {
+                        if (reverseIndex == 0)
+                          return TypingBubble(label: conversation.typingLabel!);
+                        reverseIndex--;
+                      }
                       final index =
                           conversation.messages.length - reverseIndex - 1;
                       final message = conversation.messages[index];
