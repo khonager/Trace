@@ -75,8 +75,9 @@ class _TraceHomeShellState extends State<TraceHomeShell> {
                       ChatsPage(
                         client: widget.controller?.client,
                         onExpansionChanged: (expanded) {
-                          if (_chatExpanded != expanded)
+                          if (_chatExpanded != expanded) {
                             setState(() => _chatExpanded = expanded);
+                          }
                         },
                       ),
                       const CallsPage(),

@@ -1,13 +1,14 @@
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show AsyncCallback;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show KeyboardInsertedContent, rootBundle;
+import 'package:flutter/services.dart';
+import '../application/pending_attachments.dart';
+import '../application/clipboard_attachments.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
 import 'package:trace/features/chat/presentation/typing_bubble.dart';
@@ -71,6 +72,7 @@ class ChatsPage extends StatefulWidget {
 }
 
 class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
+  final PendingAttachments _pendingAttachments = PendingAttachments();
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _overviewScrollController = ScrollController();
 
@@ -196,6 +198,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   void dispose() {
     unawaited(_clientSubscription?.cancel());
     _typingStopTimer?.cancel();
+    _pendingAttachments.dispose();
     for (final subscription in _timelineSubscriptions.values) {
       unawaited(subscription.cancel());
     }
@@ -322,7 +325,41 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   Future<void> _sendMessage() async {
     final body = _composerController.text.trim();
-    if (body.isEmpty) return;
+    if (_attachmentBusy || _conversations.isEmpty) return;
+    final targetRoom = _conversations[_activeConversation].id;
+    final pending = _pendingAttachments.forRoom(targetRoom);
+    if (pending.isNotEmpty && widget.client != null) {
+      setState(() => _attachmentBusy = true);
+      try {
+        for (final file in pending) {
+          final bytes = await file.readAsBytes();
+          if (bytes.isEmpty) throw Exception('The attachment is empty.');
+          await widget.client!.sendFile(
+            roomId: targetRoom,
+            name: file.name,
+            bytes: bytes,
+            mimeType: _mimeTypeFor(file.extension),
+          );
+          _pendingAttachments.remove(targetRoom, file);
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Attachment was not sent: ${_errorText(error)}'),
+            ),
+          );
+        }
+        return;
+      } finally {
+        if (mounted) setState(() => _attachmentBusy = false);
+      }
+    }
+    if (!mounted ||
+        _conversations[_activeConversation].id != targetRoom ||
+        body.isEmpty) {
+      return;
+    }
     final client = widget.client;
     if (client != null) {
       final roomId = _conversations[_activeConversation].id;
@@ -727,10 +764,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       builder: (context) => _ReceivedImageDialog(
         name: message.attachmentName ?? message.body,
         image: image,
-        thumbnail: mediaUri == null ? null : _loadMediaThumbnail(mediaUri),
-        cachedThumbnail: mediaUri == null
-            ? null
-            : _cachedMediaThumbnail(mediaUri),
         onDownload: _saveAttachmentData,
       ),
     );
@@ -873,21 +906,20 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         _ => throw Exception('Unsupported keyboard media type: $mimeType.'),
       };
       final roomId = _conversations[_activeConversation].id;
-      await client.sendFile(
-        roomId: roomId,
-        name: 'keyboard-${DateTime.now().millisecondsSinceEpoch}.$extension',
-        bytes: bytes,
-        mimeType: mimeType,
+      _pendingAttachments.add(
+        roomId,
+        ChatAttachment(
+          name: 'keyboard-${DateTime.now().millisecondsSinceEpoch}.$extension',
+          readAsBytes: () async => bytes,
+        ),
       );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Keyboard media sent.')));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Keyboard media was not sent: ${_errorText(error)}'),
+          content: Text(
+            'Keyboard media could not be attached: ${_errorText(error)}',
+          ),
         ),
       );
     } finally {
@@ -1413,7 +1445,12 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PendingAttachmentScope(
+    store: _pendingAttachments,
+    child: Builder(builder: _buildChats),
+  );
+
+  Widget _buildChats(BuildContext context) {
     if (_selectedContextId == _groupsContextId &&
         !(AppearanceScope.maybeOf(context)?.separateGroups ?? false)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2675,8 +2712,9 @@ class _ConversationView extends StatelessWidget {
                         (conversation.typingLabel == null ? 0 : 1),
                     itemBuilder: (context, reverseIndex) {
                       if (conversation.typingLabel != null) {
-                        if (reverseIndex == 0)
+                        if (reverseIndex == 0) {
                           return TypingBubble(label: conversation.typingLabel!);
+                        }
                         reverseIndex--;
                       }
                       final index =
@@ -3855,6 +3893,10 @@ class _FileAttachment extends StatelessWidget {
   );
 }
 
+class _PasteAttachmentIntent extends Intent {
+  const _PasteAttachmentIntent();
+}
+
 class _MessageComposer extends StatefulWidget {
   const _MessageComposer({
     required this.controller,
@@ -3895,6 +3937,48 @@ class _MessageComposerState extends State<_MessageComposer> {
     super.dispose();
   }
 
+  Future<void> _paste() async {
+    final room = widget.conversationId;
+    final store = PendingAttachmentScope.of(context);
+    try {
+      final attachments = await readClipboardAttachments();
+      if (!mounted) return;
+      if (attachments.isNotEmpty) {
+        for (final attachment in attachments) {
+          store.add(room, attachment);
+        }
+        return;
+      }
+    } on MissingPluginException {
+      // Text paste remains available in unsupported hosts.
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not paste attachment: $error')),
+        );
+      }
+      return;
+    }
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted || widget.conversationId != room || data?.text == null) return;
+    final value = widget.controller.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+    final text = value.text.replaceRange(
+      selection.start,
+      selection.end,
+      data!.text!,
+    );
+    widget.controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(
+        offset: selection.start + data.text!.length,
+      ),
+    );
+    widget.onChanged(text);
+  }
+
   void _send() {
     widget.onSend();
     _focusNode.requestFocus();
@@ -3902,6 +3986,8 @@ class _MessageComposerState extends State<_MessageComposer> {
 
   @override
   Widget build(BuildContext context) {
+    final store = PendingAttachmentScope.of(context);
+    final pending = store.forRoom(widget.conversationId);
     return SafeArea(
       top: false,
       child: Padding(
@@ -3909,6 +3995,29 @@ class _MessageComposerState extends State<_MessageComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (pending.isNotEmpty)
+              SizedBox(
+                height: 64,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final attachment in pending)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: InputChip(
+                          avatar: const Icon(Icons.attach_file),
+                          label: Text(attachment.name),
+                          onDeleted: widget.attachmentBusy
+                              ? null
+                              : () => store.remove(
+                                  widget.conversationId,
+                                  attachment,
+                                ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             if (widget.replyLabel case final label?)
               Row(
                 children: [
@@ -3999,33 +4108,71 @@ class _MessageComposerState extends State<_MessageComposer> {
                       : const Icon(Icons.add_circle_outline),
                 ),
                 Expanded(
-                  child: TextField(
-                    key: Key('message-composer-${widget.conversationId}'),
-                    controller: widget.controller,
-                    focusNode: _focusNode,
-                    onChanged: widget.onChanged,
-                    contentInsertionConfiguration:
-                        ContentInsertionConfiguration(
-                          allowedMimeTypes: const [
-                            'image/gif',
-                            'image/png',
-                            'image/jpeg',
-                            'image/webp',
-                          ],
-                          onContentInserted: widget.onKeyboardContent,
+                  child: Shortcuts(
+                    shortcuts: const {
+                      SingleActivator(LogicalKeyboardKey.keyV, control: true):
+                          _PasteAttachmentIntent(),
+                      SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+                          _PasteAttachmentIntent(),
+                      SingleActivator(LogicalKeyboardKey.insert, shift: true):
+                          _PasteAttachmentIntent(),
+                    },
+                    child: Actions(
+                      actions: {
+                        _PasteAttachmentIntent:
+                            CallbackAction<_PasteAttachmentIntent>(
+                              onInvoke: (_) {
+                                unawaited(_paste());
+                                return null;
+                              },
+                            ),
+                      },
+                      child: TextField(
+                        contextMenuBuilder: (context, editable) =>
+                            AdaptiveTextSelectionToolbar.buttonItems(
+                              anchors: editable.contextMenuAnchors,
+                              buttonItems: [
+                                ...editable.contextMenuButtonItems.where(
+                                  (item) =>
+                                      item.type != ContextMenuButtonType.paste,
+                                ),
+                                ContextMenuButtonItem(
+                                  type: ContextMenuButtonType.paste,
+                                  onPressed: () {
+                                    editable.hideToolbar();
+                                    unawaited(_paste());
+                                  },
+                                ),
+                              ],
+                            ),
+                        key: Key('message-composer-${widget.conversationId}'),
+                        controller: widget.controller,
+                        focusNode: _focusNode,
+                        onChanged: widget.onChanged,
+                        contentInsertionConfiguration:
+                            ContentInsertionConfiguration(
+                              allowedMimeTypes: const [
+                                'image/gif',
+                                'image/png',
+                                'image/jpeg',
+                                'image/webp',
+                              ],
+                              onContentInserted: widget.onKeyboardContent,
+                            ),
+                        textInputAction: TextInputAction.send,
+                        onEditingComplete: () {},
+                        onSubmitted: (_) => _send(),
+                        decoration: const InputDecoration(
+                          hintText: 'Message',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(22)),
+                          ),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 11,
+                          ),
                         ),
-                    textInputAction: TextInputAction.send,
-                    onEditingComplete: () {},
-                    onSubmitted: (_) => _send(),
-                    decoration: const InputDecoration(
-                      hintText: 'Message',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(22)),
-                      ),
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 11,
                       ),
                     ),
                   ),
@@ -4484,8 +4631,6 @@ class _ReceivedImageDialog extends StatefulWidget {
   const _ReceivedImageDialog({
     required this.name,
     required this.image,
-    this.thumbnail,
-    this.cachedThumbnail,
     required this.onDownload,
   });
 

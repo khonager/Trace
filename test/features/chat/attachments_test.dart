@@ -183,7 +183,7 @@ void main() {
     expect(preview.fit, BoxFit.contain);
   });
 
-  testWidgets('sends rich GIF content inserted by an Android keyboard', (
+  testWidgets('stages keyboard GIF content until Send is pressed', (
     tester,
   ) async {
     final client = _AttachmentClient();
@@ -201,10 +201,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(client.sentName, isNull);
+    expect(find.byType(InputChip), findsOneWidget);
+    await tester.tap(find.byKey(const Key('send-message-room-1')));
+    await tester.pumpAndSettle();
     expect(client.sentName, endsWith('.gif'));
     expect(client.sentMimeType, 'image/gif');
     expect(client.sentBytes, Uint8List.fromList([71, 73, 70]));
-    expect(find.text('Keyboard media sent.'), findsOneWidget);
+    expect(find.byType(InputChip), findsNothing);
   });
 }
 
