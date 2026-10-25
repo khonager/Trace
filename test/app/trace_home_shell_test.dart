@@ -11,6 +11,19 @@ import 'package:trace/features/chat/presentation/chats_page.dart';
 import 'package:trace/features/settings/application/appearance_settings.dart';
 
 void main() {
+  testWidgets(
+    'navigation moves from the side to the bottom for an expanded chat',
+    (tester) async {
+      await tester.pumpWidget(const TraceApp());
+      expect(find.byKey(const Key('page-side-toolbar')), findsOneWidget);
+      expect(find.byKey(const Key('page-toolbar')), findsNothing);
+      await tester.tap(find.byKey(const Key('conversation-row-0')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('page-side-toolbar')), findsNothing);
+      expect(find.byKey(const Key('page-toolbar')), findsOneWidget);
+    },
+  );
+
   testWidgets('long chat names expand in the open chat header', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(320, 700);
@@ -497,9 +510,6 @@ void main() {
 
     final avatar = find.byKey(const Key('rail-kai'));
     final overviewX = tester.getTopLeft(avatar).dx;
-    final workspaceX = tester
-        .getTopLeft(find.byKey(const Key('chat-workspace')))
-        .dx;
     expect(overviewX, greaterThan(250));
 
     await tester.drag(
@@ -508,6 +518,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final workspaceX = tester
+        .getTopLeft(find.byKey(const Key('chat-workspace')))
+        .dx;
     final focusedX = tester.getTopLeft(avatar).dx;
     expect(focusedX, closeTo(workspaceX - 18, 0.1));
     final focusedAvatar = tester.getRect(avatar);
