@@ -639,6 +639,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       builder: (context) => _ProfilePictureDialog(
         name: name,
         image: image,
+        thumbnail: mediaUri == null ? null : _loadMediaThumbnail(mediaUri),
+        cachedThumbnail: mediaUri == null
+            ? null
+            : _cachedMediaThumbnail(mediaUri),
         onDownload: (bytes) => _saveProfilePicture(name, bytes),
       ),
     );
@@ -719,6 +723,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       builder: (context) => _ReceivedImageDialog(
         name: message.attachmentName ?? message.body,
         image: image,
+        thumbnail: mediaUri == null ? null : _loadMediaThumbnail(mediaUri),
+        cachedThumbnail: mediaUri == null
+            ? null
+            : _cachedMediaThumbnail(mediaUri),
         onDownload: _saveAttachmentData,
       ),
     );
@@ -4465,6 +4473,8 @@ class _ReceivedImageDialog extends StatefulWidget {
   const _ReceivedImageDialog({
     required this.name,
     required this.image,
+    this.thumbnail,
+    this.cachedThumbnail,
     required this.onDownload,
   });
 
@@ -4590,11 +4600,15 @@ class _ProfilePictureDialog extends StatefulWidget {
   const _ProfilePictureDialog({
     required this.name,
     required this.image,
+    this.thumbnail,
+    this.cachedThumbnail,
     required this.onDownload,
   });
 
   final String name;
   final Future<Uint8List> image;
+  final Future<Uint8List>? thumbnail;
+  final Uint8List? cachedThumbnail;
   final Future<void> Function(Uint8List bytes) onDownload;
 
   @override
@@ -4661,19 +4675,50 @@ class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
                 child: FutureBuilder<Uint8List>(
                   future: widget.image,
                   builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            'This profile picture could not be loaded.',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                      );
-                    }
                     if (!snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          FutureBuilder<Uint8List>(
+                            future: widget.thumbnail,
+                            initialData: widget.cachedThumbnail,
+                            builder: (context, preview) => preview.hasData
+                                ? Image.memory(
+                                    preview.data!,
+                                    fit: BoxFit.contain,
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                          Align(
+                            alignment: Alignment.bottomCenter,
+                            child: Container(
+                              color: Colors.black54,
+                              padding: const EdgeInsets.all(16),
+                              child: snapshot.hasError
+                                  ? const Text(
+                                      'Could not load the full-size picture.',
+                                      style: TextStyle(color: Colors.white),
+                                    )
+                                  : const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                        SizedBox(width: 12),
+                                        Text(
+                                          'Loading full-size picture…',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                      ],
+                                    ),
+                            ),
+                          ),
+                        ],
+                      );
                     }
                     return InteractiveViewer(
                       minScale: .5,
