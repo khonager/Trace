@@ -15,12 +15,17 @@ void main() {
     'navigation belongs to the chat list and disappears when expanded',
     (tester) async {
       await tester.pumpWidget(const TraceApp());
-      expect(find.byKey(const Key('page-side-toolbar')), findsOneWidget);
-      expect(find.byKey(const Key('page-toolbar')), findsNothing);
+      expect(find.byKey(const Key('page-toolbar')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('chat-overview')),
+          matching: find.byKey(const Key('page-toolbar')),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const Key('conversation-row-0')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('page-side-toolbar')), findsNothing);
-      expect(find.byKey(const Key('page-toolbar')), findsOneWidget);
+      expect(find.byKey(const Key('page-toolbar')), findsNothing);
     },
   );
 
