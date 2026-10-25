@@ -141,6 +141,7 @@ class _LockPromptState extends State<LockPrompt> {
     setState(() {
       busy = false;
       if (!success) {
+        input.clear();
         error =
             'Could not unlock. Check your credential or device settings. After 5 failures, wait 30 seconds.';
       }
@@ -210,6 +211,23 @@ class SecretInput extends StatefulWidget {
 }
 
 class _SecretInputState extends State<SecretInput> {
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _clear() {
+    // Reset text, selection and composing together, then keep the existing
+    // input connection focused so the keyboard receives the empty value.
+    widget.controller.value = const TextEditingValue(
+      selection: TextSelection.collapsed(offset: 0),
+    );
+    _focusNode.requestFocus();
+  }
+
   void add(int dot) {
     if (!widget.enabled || widget.controller.text.contains('$dot')) return;
     setState(() => widget.controller.text += '$dot');
@@ -220,7 +238,12 @@ class _SecretInputState extends State<SecretInput> {
     if (widget.method != LockMethod.pattern) {
       return TextField(
         controller: widget.controller,
-        enabled: widget.enabled,
+        focusNode: _focusNode,
+        readOnly: !widget.enabled,
+        enableInteractiveSelection: widget.enabled,
+        enableIMEPersonalizedLearning: false,
+        smartDashesType: SmartDashesType.disabled,
+        smartQuotesType: SmartQuotesType.disabled,
         obscureText: true,
         autocorrect: false,
         enableSuggestions: false,
@@ -233,7 +256,19 @@ class _SecretInputState extends State<SecretInput> {
                 LengthLimitingTextInputFormatter(12),
               ]
             : null,
-        decoration: InputDecoration(labelText: widget.method.label),
+        decoration: InputDecoration(
+          labelText: widget.method.label,
+          suffixIcon: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: widget.controller,
+            builder: (context, value, _) => value.text.isEmpty
+                ? const SizedBox.shrink()
+                : IconButton(
+                    tooltip: 'Clear credential',
+                    onPressed: widget.enabled ? _clear : null,
+                    icon: const Icon(Icons.clear),
+                  ),
+          ),
+        ),
         onSubmitted: (_) => widget.onSubmitted?.call(),
       );
     }
