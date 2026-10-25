@@ -95,6 +95,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _desktopListCollapsed = false;
   bool _backgroundsPrecached = false;
   bool _attachmentBusy = false;
+  bool _requestingMissingKeys = false;
   late final MediaSearchPort _mediaSearch;
   late final MediaFavoriteStore _mediaFavoriteStore;
   late final ComposerActionPinStore _composerActionPinStore;
@@ -536,19 +537,21 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _requestMessageKey(_ChatMessage message) async {
-    final eventId = message.eventId;
-    if (eventId == null || _conversations.isEmpty) return;
-    final roomId = _conversations[_activeConversation].id;
-    final timeline = _timelines[roomId];
-    if (timeline == null) return;
+  Future<void> _requestMissingKeys() async {
+    if (_requestingMissingKeys) return;
+    setState(() => _requestingMissingKeys = true);
     try {
-      await timeline.requestKey(eventId);
+      final counts = await Future.wait(
+        _timelines.values.map((timeline) => timeline.requestMissingKeys()),
+      );
       if (!mounted) return;
+      final count = counts.fold<int>(0, (total, count) => total + count);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Room key requested. Approve it on another Trace device, or keep a verified Matrix device online.',
+            count == 0
+                ? 'No requestable missing keys in loaded chats.'
+                : 'Requested $count missing encryption ${count == 1 ? 'session' : 'sessions'}. Approve requests on another device, or restore Encryption recovery.',
           ),
         ),
       );
@@ -557,11 +560,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Could not request the room key: '
+            'Could not request all missing keys: '
             '${error.toString().replaceFirst('Exception: ', '')}',
           ),
         ),
       );
+    } finally {
+      if (mounted) setState(() => _requestingMissingKeys = false);
     }
   }
 
@@ -1361,7 +1366,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onComposerChanged: _composerChanged,
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
-              onRequestMessageKey: _requestMessageKey,
+              onRequestMissingKeys: _requestingMissingKeys
+                  ? null
+                  : _requestMissingKeys,
               onLoadAttachment: _loadAttachment,
               onLoadMediaThumbnail: _loadMediaThumbnail,
               cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -1514,7 +1521,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onComposerChanged: _composerChanged,
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
-                        onRequestMessageKey: _requestMessageKey,
+                        onRequestMissingKeys: _requestingMissingKeys
+                            ? null
+                            : _requestMissingKeys,
                         onLoadAttachment: _loadAttachment,
                         onLoadMediaThumbnail: _loadMediaThumbnail,
                         cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -2065,7 +2074,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
-    required this.onRequestMessageKey,
+    required this.onRequestMissingKeys,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2103,7 +2112,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
-  final ValueChanged<_ChatMessage> onRequestMessageKey;
+  final VoidCallback? onRequestMissingKeys;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2144,7 +2153,7 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onComposerChanged: onComposerChanged,
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
-        onRequestMessageKey: onRequestMessageKey,
+        onRequestMissingKeys: onRequestMissingKeys,
         onLoadAttachment: onLoadAttachment,
         onLoadMediaThumbnail: onLoadMediaThumbnail,
         cachedMediaThumbnail: cachedMediaThumbnail,
@@ -2380,7 +2389,7 @@ class _ConversationView extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
-    required this.onRequestMessageKey,
+    required this.onRequestMissingKeys,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2417,7 +2426,7 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
-  final ValueChanged<_ChatMessage> onRequestMessageKey;
+  final VoidCallback? onRequestMissingKeys;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2592,6 +2601,19 @@ class _ConversationView extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+          if (conversation.messages.any((message) => message.canRequestKey))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('request-missing-keys'),
+                  onPressed: onRequestMissingKeys,
+                  icon: const Icon(Icons.key_outlined),
+                  label: const Text('Request missing keys'),
+                ),
+              ),
+            ),
           Expanded(
             child: Stack(
               fit: StackFit.expand,
@@ -2666,7 +2688,6 @@ class _ConversationView extends StatelessWidget {
                             showTimestamp: _isToday(message.timestamp),
                             showSenderIdentity: !conversation.isDirect,
                             onLongPress: () => onMessageLongPress(message),
-                            onRequestKey: () => onRequestMessageKey(message),
                             onLoadAttachment: () =>
                                 onLoadAttachment(message, thumbnail: true),
                             onLoadMediaThumbnail: onLoadMediaThumbnail,
@@ -3108,7 +3129,6 @@ class _MessageBubble extends StatefulWidget {
     required this.showTimestamp,
     required this.showSenderIdentity,
     required this.onLongPress,
-    required this.onRequestKey,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
@@ -3122,7 +3142,6 @@ class _MessageBubble extends StatefulWidget {
   final bool showTimestamp;
   final bool showSenderIdentity;
   final VoidCallback onLongPress;
-  final VoidCallback onRequestKey;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
@@ -3302,37 +3321,22 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         italic: widget.message.isSystem,
                         onOpenLink: widget.onOpenLink,
                       ),
-                    if (widget.message.isUndecryptable) ...[
+                    if (widget.message.isUndecryptable &&
+                        !widget.message.canRequestKey) ...[
                       const SizedBox(height: 6),
-                      if (widget.message.canRequestKey)
-                        TextButton.icon(
-                          key: Key(
-                            'request-room-key-${widget.message.eventId}',
-                          ),
-                          onPressed: widget.onRequestKey,
-                          icon: const Icon(Icons.key_outlined, size: 16),
-                          label: const Text('Request key'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: useSentBubbleColors
-                                ? Theme.of(context).colorScheme.surface
-                                : Theme.of(context).colorScheme.onSurface,
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                          ),
-                        )
-                      else
-                        Text(
-                          'Restore encryption recovery to access its room key.',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: useSentBubbleColors
-                                ? Theme.of(
-                                    context,
-                                  ).colorScheme.surface.withValues(alpha: 0.72)
-                                : Theme.of(context).colorScheme.onSurface
-                                      .withValues(alpha: 0.65),
-                          ),
+                      Text(
+                        'Restore encryption recovery to access its room key.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: useSentBubbleColors
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.surface.withValues(alpha: 0.72)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.65),
                         ),
+                      ),
                     ],
                     if (widget.message.reactionByMe != null) ...[
                       const SizedBox(height: 6),

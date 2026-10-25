@@ -189,7 +189,6 @@ final class MatrixDartClientAdapter
     );
     _timelines[roomId] = timeline;
     timeline.refresh();
-    unawaited(timeline.requestMissingKeys());
     return timeline;
   }
 
@@ -628,7 +627,7 @@ final class MatrixDartClientAdapter
 
   Future<void> _requestMissingKeysForOpenTimelines() async {
     await Future.wait(
-      _timelines.values.map((timeline) => timeline.requestMissingKeys()),
+      _timelines.values.map((timeline) => timeline.autoRequestMissingKeys()),
     );
   }
 
@@ -1011,7 +1010,7 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     _updates.add(_current);
     // New undecryptable events should start recovery without waiting for the
     // user to tap each placeholder. The SDK deduplicates by Megolm session.
-    unawaited(requestMissingKeys());
+    unawaited(autoRequestMissingKeys());
   }
 
   bool _shouldShow(matrix.Event event) =>
@@ -1177,11 +1176,37 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   }
 
   @override
-  Future<void> requestKey(String eventId) async {
-    final event = _timeline.events.firstWhere(
-      (event) => event.eventId == eventId,
-    );
-    await event.requestKey();
+  Future<int> requestMissingKeys() async {
+    final requestedSessions = <String>{};
+    final events = <matrix.Event>[];
+    for (final event in _timeline.events) {
+      if (event.type != matrix.EventTypes.Encrypted ||
+          event.messageType != matrix.MessageTypes.BadEncrypted ||
+          event.content['can_request_session'] != true) {
+        continue;
+      }
+      final sessionId = event.content['session_id'] as String?;
+      final senderKey = event.content['sender_key'] as String?;
+      if (sessionId == null ||
+          senderKey == null ||
+          !requestedSessions.add('$sessionId|$senderKey')) {
+        continue;
+      }
+      events.add(event);
+    }
+    Object? firstError;
+    // Limit simultaneous to-device requests when a long history is loaded.
+    for (var index = 0; index < events.length; index += 4) {
+      try {
+        await Future.wait(
+          events.skip(index).take(4).map((event) => event.requestKey()),
+        );
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError != null) throw firstError;
+    return events.length;
   }
 
   @override
@@ -1228,7 +1253,7 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     return key is String ? key : null;
   }
 
-  Future<void> requestMissingKeys() async {
+  Future<void> autoRequestMissingKeys() async {
     final requestedSessions = <String>{};
     for (final event in _timeline.events) {
       if (event.type != matrix.EventTypes.Encrypted ||
@@ -1237,9 +1262,12 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
         continue;
       }
       final sessionId = event.content['session_id'] as String?;
-      if (sessionId == null || !requestedSessions.add(sessionId)) continue;
       final senderKey = event.content['sender_key'] as String?;
-      if (senderKey == null) continue;
+      if (sessionId == null ||
+          senderKey == null ||
+          !requestedSessions.add('$sessionId|$senderKey')) {
+        continue;
+      }
       try {
         await event.room.client.encryption?.keyManager.maybeAutoRequest(
           event.room.id,

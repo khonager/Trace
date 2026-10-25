@@ -111,7 +111,7 @@ class _RoomKeyRequestDialogState extends State<MatrixRoomKeyRequestDialog> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Share only if this is your device and you just used “Request key” there. This shares one encryption session, not your complete history.',
+              'Share only if this is your device and you just used “Request missing keys” there. This shares one encryption session, not your complete history.',
             ),
             const SizedBox(height: 12),
             const Text(

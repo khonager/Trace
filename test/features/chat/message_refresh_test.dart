@@ -7,7 +7,7 @@ import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
-  testWidgets('rebuilds an image when a requested room key decrypts it', (
+  testWidgets('one request refreshes all locked messages in a chat', (
     tester,
   ) async {
     final timeline = _DecryptingTimeline();
@@ -20,12 +20,15 @@ void main() {
     await tester.tap(find.byKey(const Key('conversation-row-0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Unable to decrypt this message.'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('request-room-key-event-1')));
+    expect(find.text('Unable to decrypt this message.'), findsNWidgets(2));
+    expect(find.byKey(const Key('request-missing-keys')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('request-missing-keys')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('message-image-photo.png')), findsOneWidget);
+    expect(find.text('Another decrypted message'), findsOneWidget);
     expect(find.text('Unable to decrypt this message.'), findsNothing);
+    expect(timeline.requestCount, 1);
     expect(tester.takeException(), isNull);
   });
 }
@@ -76,7 +79,8 @@ final class _RefreshClient implements MatrixClientPort {
 final class _DecryptingTimeline implements MatrixTimelinePort {
   final StreamController<List<MatrixMessage>> _updates =
       StreamController.broadcast();
-  List<MatrixMessage> _current = [_encryptedMessage];
+  List<MatrixMessage> _current = [_encryptedMessage, _secondEncryptedMessage];
+  int requestCount = 0;
 
   @override
   List<MatrixMessage> get current => _current;
@@ -88,9 +92,11 @@ final class _DecryptingTimeline implements MatrixTimelinePort {
   bool get canLoadOlder => false;
 
   @override
-  Future<void> requestKey(String eventId) async {
-    _current = [_imageMessage];
+  Future<int> requestMissingKeys() async {
+    requestCount++;
+    _current = [_imageMessage, _secondDecryptedMessage];
     _updates.add(_current);
+    return 2;
   }
 
   @override
@@ -135,4 +141,26 @@ final MatrixMessage _imageMessage = MatrixMessage(
   kind: MatrixMessageKind.image,
   attachmentName: 'photo.png',
   attachmentMimeType: 'image/png',
+);
+
+final MatrixMessage _secondEncryptedMessage = MatrixMessage(
+  eventId: 'event-2',
+  senderId: '@alice:example.org',
+  senderName: 'Alice',
+  body: 'Unable to decrypt this message.',
+  timestamp: DateTime.utc(2026, 8, 31, 13),
+  sentByMe: false,
+  delivery: MatrixMessageDelivery.synced,
+  isUndecryptable: true,
+  canRequestKey: true,
+);
+
+final MatrixMessage _secondDecryptedMessage = MatrixMessage(
+  eventId: 'event-2',
+  senderId: '@alice:example.org',
+  senderName: 'Alice',
+  body: 'Another decrypted message',
+  timestamp: DateTime.utc(2026, 8, 31, 13),
+  sentByMe: false,
+  delivery: MatrixMessageDelivery.synced,
 );
