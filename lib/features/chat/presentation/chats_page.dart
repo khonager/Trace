@@ -48,7 +48,7 @@ class ChatsPage extends StatefulWidget {
   const ChatsPage({
     super.key,
     this.client,
-    this.onExpansionChanged,
+    this.navigation,
     this.saveAttachment,
     this.openLink,
     this.pickAttachment,
@@ -59,7 +59,7 @@ class ChatsPage extends StatefulWidget {
   });
 
   final MatrixClientPort? client;
-  final ValueChanged<bool>? onExpansionChanged;
+  final Widget? navigation;
   final Future<String?> Function(MatrixAttachmentData attachment)?
   saveAttachment;
   final Future<bool> Function(Uri uri)? openLink;
@@ -279,7 +279,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }
 
   Future<void> _settleWorkspace({required bool open}) async {
-    widget.onExpansionChanged?.call(open);
     final target = open ? 1.0 : 0.0;
     final distance = (target - _workspaceTransition.value).abs();
     final workspaceDuration = Duration(
@@ -1299,7 +1298,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   void _toggleDesktopList() {
     setState(() => _desktopListCollapsed = !_desktopListCollapsed);
-    widget.onExpansionChanged?.call(_desktopListCollapsed);
   }
 
   Future<void> _toggleMobileRail() => _mobileRailCollapse.animateTo(
@@ -1424,6 +1422,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             child: SizedBox(
               width: listWidth,
               child: _ChatOverview(
+                navigation: widget.navigation,
                 conversations: _conversations,
                 spaces: _availableSpaces,
                 selectedContextId: _selectedContextId,
@@ -1526,6 +1525,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     if (_conversations.isEmpty) {
       if (_selectedContextId != null) {
         return _ChatOverview(
+          navigation: widget.navigation,
           conversations: const [],
           spaces: _availableSpaces,
           selectedContextId: _selectedContextId,
@@ -1543,10 +1543,17 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           onNewChat: _showNewChat,
         );
       }
-      return _EmptyRoomsView(
-        snapshot: widget.client?.current,
-        onSearch: _showSearch,
-        onNewChat: widget.client == null ? null : _showNewChat,
+      return Column(
+        children: [
+          Expanded(
+            child: _EmptyRoomsView(
+              snapshot: widget.client?.current,
+              onSearch: _showSearch,
+              onNewChat: widget.client == null ? null : _showNewChat,
+            ),
+          ),
+          if (widget.navigation != null) widget.navigation!,
+        ],
       );
     }
     return LayoutBuilder(
@@ -1599,6 +1606,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                       bottom: 0,
                       width: overviewCardWidth,
                       child: _ChatOverview(
+                        navigation: widget.navigation,
                         conversations: _conversations,
                         spaces: _availableSpaces,
                         selectedContextId: _selectedContextId,
@@ -1764,6 +1772,7 @@ class _ChatOverview extends StatelessWidget {
     required this.onSearch,
     required this.onNewChat,
     this.highlightActive = false,
+    this.navigation,
   });
 
   final List<_Conversation> conversations;
@@ -1782,6 +1791,7 @@ class _ChatOverview extends StatelessWidget {
   final VoidCallback onSearch;
   final VoidCallback onNewChat;
   final bool highlightActive;
+  final Widget? navigation;
 
   @override
   Widget build(BuildContext context) {
@@ -1942,6 +1952,14 @@ class _ChatOverview extends StatelessWidget {
                     },
                   ),
           ),
+          if (navigation != null && transitionProgress < 1)
+            IgnorePointer(
+              ignoring: transitionProgress > 0,
+              child: Opacity(
+                opacity: 1 - transitionProgress,
+                child: navigation,
+              ),
+            ),
         ],
       ),
     );

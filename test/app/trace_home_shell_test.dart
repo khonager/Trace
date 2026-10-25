@@ -12,7 +12,7 @@ import 'package:trace/features/settings/application/appearance_settings.dart';
 
 void main() {
   testWidgets(
-    'navigation moves from the side to the bottom for an expanded chat',
+    'navigation belongs to the chat list and disappears when expanded',
     (tester) async {
       await tester.pumpWidget(const TraceApp());
       expect(find.byKey(const Key('page-side-toolbar')), findsOneWidget);
