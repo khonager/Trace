@@ -3836,7 +3836,7 @@ class _FileAttachment extends StatelessWidget {
   );
 }
 
-class _MessageComposer extends StatelessWidget {
+class _MessageComposer extends StatefulWidget {
   const _MessageComposer({
     required this.controller,
     required this.conversationId,
@@ -3864,6 +3864,24 @@ class _MessageComposer extends StatelessWidget {
   final VoidCallback onCancelReply;
 
   @override
+  State<_MessageComposer> createState() => _MessageComposerState();
+}
+
+class _MessageComposerState extends State<_MessageComposer> {
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    widget.onSend();
+    _focusNode.requestFocus();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
@@ -3872,7 +3890,7 @@ class _MessageComposer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (replyLabel case final label?)
+            if (widget.replyLabel case final label?)
               Row(
                 children: [
                   const Icon(Icons.reply, size: 18),
@@ -3880,32 +3898,32 @@ class _MessageComposer extends StatelessWidget {
                   Expanded(child: Text(label)),
                   IconButton(
                     tooltip: 'Cancel reply',
-                    onPressed: onCancelReply,
+                    onPressed: widget.onCancelReply,
                     icon: const Icon(Icons.close, size: 18),
                   ),
                 ],
               ),
-            if (pinnedActions.isNotEmpty)
+            if (widget.pinnedActions.isNotEmpty)
               SizedBox(
                 key: const Key('pinned-composer-actions'),
                 height: 42,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.only(bottom: 6),
-                  itemCount: pinnedActions.length,
+                  itemCount: widget.pinnedActions.length,
                   separatorBuilder: (_, _) => const SizedBox(width: 6),
                   itemBuilder: (context, index) {
-                    final action = pinnedActions[index];
+                    final action = widget.pinnedActions[index];
                     return Tooltip(
                       message:
                           '${_composerActionLabel(action)} · Hold to unpin',
                       child: GestureDetector(
-                        onLongPress: () => onTogglePinned(action),
+                        onLongPress: () => widget.onTogglePinned(action),
                         child: OutlinedButton.icon(
                           key: Key('pinned-composer-action-${action.name}'),
-                          onPressed: attachmentBusy
+                          onPressed: widget.attachmentBusy
                               ? null
-                              : () => onComposerAction(action),
+                              : () => widget.onComposerAction(action),
                           icon: Icon(_composerActionIcon(action), size: 17),
                           label: Text(_composerActionShortLabel(action)),
                           style: OutlinedButton.styleFrom(
@@ -3923,8 +3941,8 @@ class _MessageComposer extends StatelessWidget {
                 PopupMenuButton<ComposerAction>(
                   key: const Key('composer-action-menu'),
                   tooltip: 'Add',
-                  enabled: !attachmentBusy,
-                  onSelected: onComposerAction,
+                  enabled: !widget.attachmentBusy,
+                  onSelected: widget.onComposerAction,
                   itemBuilder: (context) => ComposerAction.values
                       .map(
                         (action) => PopupMenuItem<ComposerAction>(
@@ -3934,7 +3952,7 @@ class _MessageComposer extends StatelessWidget {
                             behavior: HitTestBehavior.opaque,
                             onLongPress: () {
                               Navigator.pop(context);
-                              onTogglePinned(action);
+                              widget.onTogglePinned(action);
                             },
                             child: SizedBox(
                               width: double.infinity,
@@ -3945,7 +3963,7 @@ class _MessageComposer extends StatelessWidget {
                                   Expanded(
                                     child: Text(_composerActionLabel(action)),
                                   ),
-                                  if (pinnedActions.contains(action))
+                                  if (widget.pinnedActions.contains(action))
                                     const Icon(Icons.push_pin, size: 16),
                                 ],
                               ),
@@ -3954,7 +3972,7 @@ class _MessageComposer extends StatelessWidget {
                         ),
                       )
                       .toList(growable: false),
-                  icon: attachmentBusy
+                  icon: widget.attachmentBusy
                       ? const SizedBox.square(
                           dimension: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
@@ -3963,9 +3981,10 @@ class _MessageComposer extends StatelessWidget {
                 ),
                 Expanded(
                   child: TextField(
-                    key: Key('message-composer-$conversationId'),
-                    controller: controller,
-                    onChanged: onChanged,
+                    key: Key('message-composer-${widget.conversationId}'),
+                    controller: widget.controller,
+                    focusNode: _focusNode,
+                    onChanged: widget.onChanged,
                     contentInsertionConfiguration:
                         ContentInsertionConfiguration(
                           allowedMimeTypes: const [
@@ -3974,10 +3993,11 @@ class _MessageComposer extends StatelessWidget {
                             'image/jpeg',
                             'image/webp',
                           ],
-                          onContentInserted: onKeyboardContent,
+                          onContentInserted: widget.onKeyboardContent,
                         ),
                     textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => onSend(),
+                    onEditingComplete: () {},
+                    onSubmitted: (_) => _send(),
                     decoration: const InputDecoration(
                       hintText: 'Message',
                       border: OutlineInputBorder(
@@ -3992,9 +4012,9 @@ class _MessageComposer extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  key: Key('send-message-$conversationId'),
+                  key: Key('send-message-${widget.conversationId}'),
                   tooltip: 'Send',
-                  onPressed: onSend,
+                  onPressed: _send,
                   icon: const Icon(Icons.arrow_upward),
                 ),
               ],

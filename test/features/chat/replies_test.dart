@@ -41,6 +41,34 @@ void main() {
 
     expect(client.sent, const [('A new reply', 'original-event')]);
   });
+
+  testWidgets('keeps the composer focused after button and keyboard sends', (
+    tester,
+  ) async {
+    final client = _ReplyClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ChatsPage(client: client)),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('conversation-row-0')));
+    await tester.pumpAndSettle();
+
+    final composer = find.byKey(const Key('message-composer-room-1'));
+    FocusNode composerFocus() => tester.widget<TextField>(composer).focusNode!;
+
+    await tester.enterText(composer, 'First message');
+    await tester.tap(find.byKey(const Key('send-message-room-1')));
+    await tester.pump();
+    expect(client.sent.last.$1, 'First message');
+    expect(composerFocus().hasFocus, isTrue);
+
+    await tester.enterText(composer, 'Second message');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    expect(client.sent.last.$1, 'Second message');
+    expect(composerFocus().hasFocus, isTrue);
+  });
 }
 
 final class _ReplyClient implements MatrixClientPort {
