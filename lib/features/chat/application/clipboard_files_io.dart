@@ -2,6 +2,18 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'attachment_picker.dart';
+import 'package:pasteboard/pasteboard.dart';
+
+Future<List<String>> clipboardFilePaths() async {
+  if (Platform.isIOS) return [];
+  if (Platform.isAndroid) {
+    return await const MethodChannel(
+          'chat.trace/clipboard',
+        ).invokeListMethod<String>('files') ??
+        [];
+  }
+  return Pasteboard.files();
+}
 
 Future<List<ChatAttachment>> attachmentsFromPaths(List<String> paths) async {
   final result = <ChatAttachment>[];

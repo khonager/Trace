@@ -1,5 +1,7 @@
 package chat.trace.client
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.provider.OpenableColumns
 import android.net.Uri
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -11,6 +13,14 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat.trace/clipboard")
             .setMethodCallHandler { call, result ->
+                if (call.method == "files") {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = clipboard.primaryClip
+                    val files = if (clip == null) emptyList() else
+                        (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri?.toString() }
+                    result.success(files)
+                    return@setMethodCallHandler
+                }
                 if (call.method != "readContent") {
                     result.notImplemented()
                     return@setMethodCallHandler

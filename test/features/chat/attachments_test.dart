@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel, LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/application/attachment_picker.dart';
@@ -10,6 +11,38 @@ import 'package:trace/features/chat/application/media_search.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
+  testWidgets('Ctrl+V stages an image and removing it never sends it', (
+    tester,
+  ) async {
+    final client = _AttachmentClient();
+    const channel = MethodChannel('pasteboard');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      if (call.method == 'files') return <String>[];
+      if (call.method == 'image') return Uint8List.fromList([137, 80, 78, 71]);
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    await _openChat(tester, client: client, picker: () async => null);
+    await tester.tap(find.byKey(const Key('message-composer-room-1')));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(client.sentName, isNull);
+    final chip = tester.widget<InputChip>(find.byType(InputChip));
+    chip.onDeleted!();
+    await tester.pump();
+    expect(find.byType(InputChip), findsNothing);
+    expect(client.sentName, isNull);
+  });
+
   testWidgets('shows an actionable error when the system picker fails', (
     tester,
   ) async {
