@@ -20,6 +20,7 @@ class TraceHomeShell extends StatefulWidget {
 
 class _TraceHomeShellState extends State<TraceHomeShell> {
   TracePage _page = TracePage.chats;
+  bool _chatExpanded = false;
   final AppearanceSettings _appearance = AppearanceSettings();
 
   @override
@@ -42,41 +43,78 @@ class _TraceHomeShellState extends State<TraceHomeShell> {
         color: Theme.of(context).scaffoldBackgroundColor,
         child: SafeArea(
           child: Scaffold(
-            body: IndexedStack(
-              index: _page.index,
+            body: Row(
               children: [
-                ChatsPage(client: widget.controller?.client),
-                const CallsPage(),
-                SettingsPage(
-                  controller: widget.controller,
-                  appearance: _appearance,
+                if (!_chatExpanded)
+                  NavigationRail(
+                    key: const Key('page-side-toolbar'),
+                    minWidth: 64,
+                    selectedIndex: _page.index,
+                    onDestinationSelected: (index) =>
+                        setState(() => _page = TracePage.values[index]),
+                    labelType: NavigationRailLabelType.all,
+                    destinations: const [
+                      NavigationRailDestination(
+                        icon: Icon(Icons.chat_bubble_outline),
+                        label: Text('Chats'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.call_outlined),
+                        label: Text('Calls'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        label: Text('Settings'),
+                      ),
+                    ],
+                  ),
+                Expanded(
+                  child: IndexedStack(
+                    index: _page.index,
+                    children: [
+                      ChatsPage(
+                        client: widget.controller?.client,
+                        onExpansionChanged: (expanded) {
+                          if (_chatExpanded != expanded)
+                            setState(() => _chatExpanded = expanded);
+                        },
+                      ),
+                      const CallsPage(),
+                      SettingsPage(
+                        controller: widget.controller,
+                        appearance: _appearance,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            bottomNavigationBar: NavigationBar(
-              key: const Key('page-toolbar'),
-              selectedIndex: _page.index,
-              onDestinationSelected: (index) {
-                setState(() => _page = TracePage.values[index]);
-              },
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.chat_bubble_outline),
-                  selectedIcon: Icon(Icons.chat_bubble),
-                  label: 'Chats',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.call_outlined),
-                  selectedIcon: Icon(Icons.call),
-                  label: 'Calls',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.settings_outlined),
-                  selectedIcon: Icon(Icons.settings),
-                  label: 'Settings',
-                ),
-              ],
-            ),
+            bottomNavigationBar: !_chatExpanded
+                ? null
+                : NavigationBar(
+                    key: const Key('page-toolbar'),
+                    selectedIndex: _page.index,
+                    onDestinationSelected: (index) {
+                      setState(() => _page = TracePage.values[index]);
+                    },
+                    destinations: const [
+                      NavigationDestination(
+                        icon: Icon(Icons.chat_bubble_outline),
+                        selectedIcon: Icon(Icons.chat_bubble),
+                        label: 'Chats',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.call_outlined),
+                        selectedIcon: Icon(Icons.call),
+                        label: 'Calls',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        selectedIcon: Icon(Icons.settings),
+                        label: 'Settings',
+                      ),
+                    ],
+                  ),
           ),
         ),
       ),

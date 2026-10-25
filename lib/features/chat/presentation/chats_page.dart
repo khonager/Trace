@@ -45,6 +45,7 @@ class ChatsPage extends StatefulWidget {
   const ChatsPage({
     super.key,
     this.client,
+    this.onExpansionChanged,
     this.saveAttachment,
     this.openLink,
     this.pickAttachment,
@@ -55,6 +56,7 @@ class ChatsPage extends StatefulWidget {
   });
 
   final MatrixClientPort? client;
+  final ValueChanged<bool>? onExpansionChanged;
   final Future<String?> Function(MatrixAttachmentData attachment)?
   saveAttachment;
   final Future<bool> Function(Uri uri)? openLink;
@@ -219,6 +221,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }
 
   Future<void> _settleWorkspace({required bool open}) async {
+    widget.onExpansionChanged?.call(open);
     final target = open ? 1.0 : 0.0;
     final distance = (target - _workspaceTransition.value).abs();
     final workspaceDuration = Duration(
@@ -1209,6 +1212,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
 
   void _toggleDesktopList() {
     setState(() => _desktopListCollapsed = !_desktopListCollapsed);
+    widget.onExpansionChanged?.call(_desktopListCollapsed);
   }
 
   Future<void> _toggleMobileRail() => _mobileRailCollapse.animateTo(
