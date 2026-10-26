@@ -409,6 +409,7 @@ class SettingsPage extends StatelessWidget {
       builder: (_) => _OwnPictureDialog(
         name: account.displayName,
         image: controller!.client.downloadMedia(uri),
+        thumbnail: controller!.client.downloadMediaThumbnail(uri),
       ),
     );
   }
@@ -614,7 +615,7 @@ class _MatrixAccountAvatarState extends State<_MatrixAccountAvatar> {
   void _load() {
     _image = widget.mediaUri == null
         ? null
-        : widget.client.downloadMedia(widget.mediaUri!);
+        : widget.client.downloadMediaThumbnail(widget.mediaUri!);
   }
 
   @override
@@ -628,10 +629,15 @@ class _MatrixAccountAvatarState extends State<_MatrixAccountAvatar> {
 }
 
 class _OwnPictureDialog extends StatefulWidget {
-  const _OwnPictureDialog({required this.name, required this.image});
+  const _OwnPictureDialog({
+    required this.name,
+    required this.image,
+    required this.thumbnail,
+  });
 
   final String name;
   final Future<Uint8List> image;
+  final Future<Uint8List> thumbnail;
 
   @override
   State<_OwnPictureDialog> createState() => _OwnPictureDialogState();
@@ -696,13 +702,36 @@ class _OwnPictureDialogState extends State<_OwnPictureDialog> {
               child: FutureBuilder<Uint8List>(
                 future: widget.image,
                 builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return const Center(
-                      child: Text('Could not load profile picture.'),
-                    );
-                  }
                   if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        FutureBuilder<Uint8List>(
+                          future: widget.thumbnail,
+                          builder: (context, preview) => preview.hasData
+                              ? Image.memory(preview.data!, fit: BoxFit.contain)
+                              : const SizedBox.shrink(),
+                        ),
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: snapshot.hasError
+                                ? const Text(
+                                    'Could not load the full-size picture.',
+                                  )
+                                : const Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CircularProgressIndicator(),
+                                      SizedBox(height: 8),
+                                      Text('Loading full-size picture…'),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      ],
+                    );
                   }
                   return InteractiveViewer(
                     minScale: .5,
