@@ -384,10 +384,7 @@ void main() {
     await tester.tap(find.byTooltip('Flip horizontally'));
     await tester.pump();
     await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pumpAndSettle();
+    await _waitForProfileSave(tester);
     expect(find.byKey(const Key('profile-picture-editor')), findsNothing);
     expect(find.byKey(const Key('matrix-display-name-field')), findsNothing);
     expect(client.uploadedAvatar, isNotNull);
@@ -443,10 +440,7 @@ void main() {
     await tester.pump();
     expect(tester.widget<Switch>(blurSwitch).value, isTrue);
     await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pumpAndSettle();
+    await _waitForProfileSave(tester);
     expect(imageStore.written?.transform.blurBackground, isTrue);
   });
 
@@ -617,10 +611,7 @@ void main() {
     await tester.tap(find.byTooltip('Zoom in'));
     await tester.tap(find.byTooltip('Zoom in'));
     await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pumpAndSettle();
+    await _waitForProfileSave(tester);
     expect(store.written?.bytes, source);
     expect(store.writtenUri, client.pendingAvatarUri);
     expect(client.avatarUri, isNull);
@@ -647,13 +638,28 @@ void main() {
     await tester.tap(find.byTooltip('Zoom out'));
     await tester.tap(find.byTooltip('Zoom out'));
     await tester.tap(find.byKey(const Key('save-profile-picture-edit')));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pumpAndSettle();
+    await _waitForProfileSave(tester);
     expect(store.written?.bytes, source);
     expect(store.written!.transform.scale, lessThan(firstScale));
   });
+}
+
+Future<void> _waitForProfileSave(WidgetTester tester) async {
+  final save = find.byKey(const Key('save-profile-picture-edit'));
+  // Raster encoding finishes on a real engine thread, outside the fake clock.
+  // Wait for the editor to close instead of assuming it completes in 100 ms.
+  for (
+    var attempt = 0;
+    attempt < 100 && save.evaluate().isNotEmpty;
+    attempt++
+  ) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+  expect(save, findsNothing);
 }
 
 class _TestProfileImageStore extends ProfileImageStore {
