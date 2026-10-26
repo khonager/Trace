@@ -17,7 +17,7 @@
           };
         };
         android = pkgs.androidenv.composeAndroidPackages {
-          platformVersions = [ "35" "36" "37" ];
+          platformVersions = [ "34" "35" "36" "37" ];
           buildToolsVersions = [ "35.0.0" "37.0.0" ];
           cmakeVersions = [ "3.22.1" ];
           includeNDK = true;
