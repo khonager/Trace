@@ -18,4 +18,4 @@ Reviewed widget renders:
 Regenerate with `test/app/_capture_chat_layout_test.dart`, `--update-goldens`,
 and `--dart-define=CHAT_PREVIEW=wide`, `narrow`, or `expanded`. Set
 `TRACE_PREVIEW_FONT` to a local sans-serif TTF for readable preview typography.
-The capture helper is excluded from the regular test suite.
+The capture helper is skipped unless `TRACE_PREVIEW_FONT` is provided.

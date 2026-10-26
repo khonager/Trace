@@ -39,5 +39,5 @@ void main() {
       find.byKey(const Key('capture')),
       matchesGoldenFile('../../docs/product/chat-navigation-$mode.png'),
     );
-  });
+  }, skip: Platform.environment['TRACE_PREVIEW_FONT'] == null);
 }
