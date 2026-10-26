@@ -4887,6 +4887,13 @@ class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
     setState(() => _downloading = true);
     try {
       await widget.onDownload(await widget.image);
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not download the full-size picture.'),
+          ),
+        );
     } finally {
       if (mounted) setState(() => _downloading = false);
     }

@@ -29,6 +29,48 @@ void main() {
     },
   );
 
+  testWidgets(
+    'profile viewer keeps a thumbnail visible until the original arrives',
+    (tester) async {
+      final original = Completer<Uint8List>();
+      final bytes = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final client = _TimelineSpyClient(
+        [
+          _room(
+            id: 'photo',
+            name: 'Photo',
+            avatarMediaUri: Uri.parse('mxc://example.org/avatar'),
+          ),
+        ],
+        mediaBytes: bytes,
+        original: original.future,
+      );
+      addTearDown(client.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: ChatsPage(client: client)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('conversation-row-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-profile-picture-photo')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+      expect(find.text('Loading full-size picture…'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(Dialog), matching: find.byType(Image)),
+        findsOneWidget,
+      );
+      original.complete(bytes);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('profile-picture-preview')), findsOneWidget);
+      expect(find.text('Loading full-size picture…'), findsNothing);
+    },
+  );
+
   testWidgets('long chat names expand in the open chat header', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(320, 700);
@@ -725,7 +767,7 @@ MatrixRoom _room({
 );
 
 final class _TimelineSpyClient implements MatrixClientPort {
-  _TimelineSpyClient(List<MatrixRoom> rooms, {this.mediaBytes})
+  _TimelineSpyClient(List<MatrixRoom> rooms, {this.mediaBytes, this.original})
     : _current = MatrixClientSnapshot(
         phase: MatrixConnectionPhase.ready,
         rooms: rooms,
@@ -738,6 +780,11 @@ final class _TimelineSpyClient implements MatrixClientPort {
   @override
   MatrixClientSnapshot get current => _current;
   final List<int>? mediaBytes;
+  final Future<Uint8List>? original;
+
+  @override
+  Future<Uint8List> downloadMedia(Uri uri) =>
+      original ?? Future.value(Uint8List.fromList(mediaBytes ?? []));
 
   final List<String> openedRoomIds = [];
   final List<Uri> thumbnailRequests = [];
