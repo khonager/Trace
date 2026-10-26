@@ -1,4 +1,5 @@
 import 'package:trace/features/lock/lock_widgets.dart';
+import 'missing_keys_tile.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -1294,6 +1295,7 @@ class _EncryptionRecoveryCardState extends State<_EncryptionRecoveryCard> {
                   ? () => _run(widget.onRestore)
                   : null,
             ),
+            MissingKeysTile(client: widget.client),
             if (state?.initialized == true) ...[
               const Divider(height: 1),
               Padding(

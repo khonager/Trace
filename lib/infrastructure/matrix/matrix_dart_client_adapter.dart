@@ -1176,10 +1176,11 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
   }
 
   @override
-  Future<int> requestMissingKeys() async {
+  Future<int> requestMissingKeys({String? eventId}) async {
     final requestedSessions = <String>{};
     final events = <matrix.Event>[];
     for (final event in _timeline.events) {
+      if (eventId != null && event.eventId != eventId) continue;
       if (event.type != matrix.EventTypes.Encrypted ||
           event.messageType != matrix.MessageTypes.BadEncrypted ||
           event.content['can_request_session'] != true) {

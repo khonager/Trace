@@ -103,7 +103,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   bool _desktopListCollapsed = false;
   bool _backgroundsPrecached = false;
   bool _attachmentBusy = false;
-  bool _requestingMissingKeys = false;
   late final MediaSearchPort _mediaSearch;
   late final MediaFavoriteStore _mediaFavoriteStore;
   late final ComposerActionPinStore _composerActionPinStore;
@@ -485,6 +484,12 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               ),
               const Divider(height: 1),
             ],
+            if (message.canRequestKey)
+              ListTile(
+                leading: const Icon(Icons.key_outlined),
+                title: const Text('Request message key'),
+                onTap: () => Navigator.pop(context, 'request-key'),
+              ),
             if (message.delivery == MatrixMessageDelivery.failed)
               ListTile(
                 leading: const Icon(Icons.refresh),
@@ -526,6 +531,17 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final roomId = _conversations[_activeConversation].id;
     try {
       switch (action) {
+        case 'request-key':
+          await _timelines[roomId]?.requestMissingKeys(eventId: eventId);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Message key requested. Another device may need to approve it.',
+                ),
+              ),
+            );
+          }
         case 'retry':
           await _timelines[roomId]?.retry(eventId);
         case 'reply':
@@ -630,39 +646,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       context: context,
       builder: (context) => const _CustomReactionDialog(),
     );
-  }
-
-  Future<void> _requestMissingKeys() async {
-    if (_requestingMissingKeys) return;
-    setState(() => _requestingMissingKeys = true);
-    try {
-      final counts = await Future.wait(
-        _timelines.values.map((timeline) => timeline.requestMissingKeys()),
-      );
-      if (!mounted) return;
-      final count = counts.fold<int>(0, (total, count) => total + count);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            count == 0
-                ? 'No requestable missing keys in loaded chats.'
-                : 'Requested $count missing encryption ${count == 1 ? 'session' : 'sessions'}. Approve requests on another device, or restore Encryption recovery.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not request all missing keys: '
-            '${error.toString().replaceFirst('Exception: ', '')}',
-          ),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _requestingMissingKeys = false);
-    }
   }
 
   Future<MatrixAttachmentData> _loadAttachment(
@@ -1465,9 +1448,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onComposerChanged: _composerChanged,
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
-              onRequestMissingKeys: _requestingMissingKeys
-                  ? null
-                  : _requestMissingKeys,
               onLoadAttachment: _loadAttachment,
               onLoadMediaThumbnail: _loadMediaThumbnail,
               cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -1643,9 +1623,6 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onComposerChanged: _composerChanged,
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
-                        onRequestMissingKeys: _requestingMissingKeys
-                            ? null
-                            : _requestMissingKeys,
                         onLoadAttachment: _loadAttachment,
                         onLoadMediaThumbnail: _loadMediaThumbnail,
                         cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -2216,7 +2193,6 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
-    required this.onRequestMissingKeys,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2255,7 +2231,6 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
-  final VoidCallback? onRequestMissingKeys;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2297,7 +2272,6 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onComposerChanged: onComposerChanged,
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
-        onRequestMissingKeys: onRequestMissingKeys,
         onLoadAttachment: onLoadAttachment,
         onLoadMediaThumbnail: onLoadMediaThumbnail,
         cachedMediaThumbnail: cachedMediaThumbnail,
@@ -2534,7 +2508,6 @@ class _ConversationView extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
-    required this.onRequestMissingKeys,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2572,7 +2545,6 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
-  final VoidCallback? onRequestMissingKeys;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2759,19 +2731,6 @@ class _ConversationView extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
-          if (conversation.messages.any((message) => message.canRequestKey))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  key: const Key('request-missing-keys'),
-                  onPressed: onRequestMissingKeys,
-                  icon: const Icon(Icons.key_outlined),
-                  label: const Text('Request missing keys'),
-                ),
-              ),
-            ),
           Expanded(
             child: Stack(
               fit: StackFit.expand,

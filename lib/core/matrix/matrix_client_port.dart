@@ -168,7 +168,8 @@ abstract interface class MatrixTimelinePort {
 
   /// Requests the missing encryption sessions in the loaded timeline.
   /// Multiple messages sharing a session produce one request.
-  Future<int> requestMissingKeys();
+  /// When [eventId] is provided, only that message's session is requested.
+  Future<int> requestMissingKeys({String? eventId});
 
   /// Adds, replaces, or removes the current user's reaction.
   ///
