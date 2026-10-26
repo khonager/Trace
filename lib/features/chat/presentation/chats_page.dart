@@ -122,6 +122,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     unawaited(_loadPinnedComposerActions());
     _profileHistory = ProfileHistoryStore(
       account: widget.client?.current.account?.userId ?? 'demo',
+      loadThumbnail: widget.client?.downloadMediaThumbnail,
     );
     _allRooms = widget.client?.current.rooms ?? const [];
     unawaited(_observeProfiles(_allRooms));
@@ -185,8 +186,11 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           user: user,
           name: room!.name,
           avatar: room.avatarMediaUri,
-          onOpenPicture: (entry) =>
-              _showProfilePicture(name: entry.name, mediaUri: entry.avatar),
+          onOpenPicture: (entry) => _showProfilePicture(
+            name: entry.name,
+            mediaUri: entry.avatar,
+            thumbnailBytes: entry.thumbnail,
+          ),
         ),
       );
     } catch (_) {
@@ -700,6 +704,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     required String name,
     Uri? mediaUri,
     String? asset,
+    Uint8List? thumbnailBytes,
   }) async {
     if (mediaUri == null && asset == null) return;
     final image = mediaUri != null
@@ -717,10 +722,14 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
       builder: (context) => _ProfilePictureDialog(
         name: name,
         image: image,
-        thumbnail: mediaUri == null ? null : _loadMediaThumbnail(mediaUri),
-        cachedThumbnail: mediaUri == null
+        thumbnail: thumbnailBytes != null
+            ? Future.value(thumbnailBytes)
+            : mediaUri == null
             ? null
-            : _cachedMediaThumbnail(mediaUri),
+            : _loadMediaThumbnail(mediaUri),
+        cachedThumbnail:
+            thumbnailBytes ??
+            (mediaUri == null ? null : _cachedMediaThumbnail(mediaUri)),
         onDownload: (bytes) => _saveProfilePicture(name, bytes),
       ),
     );
@@ -4847,12 +4856,13 @@ class _ProfilePictureDialogState extends State<_ProfilePictureDialog> {
     try {
       await widget.onDownload(await widget.image);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not download the full-size picture.'),
           ),
         );
+      }
     } finally {
       if (mounted) setState(() => _downloading = false);
     }

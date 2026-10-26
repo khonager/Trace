@@ -85,7 +85,19 @@ class _ProfileHistoryDialogState extends State<ProfileHistoryDialog> {
                         itemBuilder: (context, index) {
                           final entry = entries[index];
                           return ListTile(
-                            leading: const Icon(Icons.account_circle_outlined),
+                            leading: entry.thumbnail == null
+                                ? const Icon(Icons.account_circle_outlined)
+                                : ClipOval(
+                                    child: Image.memory(
+                                      entry.thumbnail!,
+                                      width: 40,
+                                      height: 40,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => const Icon(
+                                        Icons.account_circle_outlined,
+                                      ),
+                                    ),
+                                  ),
                             title: Text(entry.name),
                             subtitle: Text(
                               MaterialLocalizations.of(

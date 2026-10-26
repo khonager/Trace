@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/features/chat/application/profile_history.dart';
 
@@ -8,6 +9,7 @@ void main() {
       String? saved;
       final store = ProfileHistoryStore(
         account: 'test',
+        loadThumbnail: (_) async => Uint8List.fromList([1, 2, 3]),
         read: () async => saved,
         write: (value) async {
           saved = value;
@@ -30,6 +32,7 @@ void main() {
       );
       await restored.ready;
       expect(restored.entries('alice').first.name, 'New Alice');
+      expect(restored.entries('alice').first.thumbnail, [1, 2, 3]);
       await restored.delete('alice', restored.entries('alice').first);
       await restored.observe(
         'alice',
