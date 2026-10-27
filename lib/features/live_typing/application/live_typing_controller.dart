@@ -218,8 +218,9 @@ final class LiveTypingController extends ChangeNotifier {
         text is! String ||
         text.length > 4096 ||
         session is! String ||
-        session != _peers[packet.peer]?.content['nonce'])
+        session != _peers[packet.peer]?.content['nonce']) {
       return;
+    }
     final key = '${packet.peer}/$session';
     if (sequence <= (_sequences[key] ?? -1)) return;
     if (_sequences.length > 256) return;

@@ -47,6 +47,19 @@ class MatrixSessionController extends ChangeNotifier
   MatrixVerificationPort? get activeVerification => _activeVerification;
   MatrixVerificationSnapshot? get verificationSnapshot => _verificationSnapshot;
   MatrixRoomKeyRequestPort? get activeRoomKeyRequest => _activeRoomKeyRequest;
+  int get pendingRoomKeyRequestsForActiveDevice {
+    final active = _activeRoomKeyRequest;
+    if (active == null) return 0;
+    return 1 +
+        _roomKeyRequestQueue
+            .where(
+              (request) =>
+                  request.userId == active.userId &&
+                  request.deviceId == active.deviceId,
+            )
+            .length;
+  }
+
   List<MatrixSavedProfile> get savedProfiles => _savedProfiles;
   String get activeProfileId => _activeProfileId;
   bool get addingProfile => _addingProfile;
@@ -341,6 +354,30 @@ class MatrixSessionController extends ChangeNotifier
     if (request == null) return;
     await request.share();
     _advanceRoomKeyRequest();
+  }
+
+  Future<void> sharePendingRoomKeysForActiveDevice() async {
+    final active = _activeRoomKeyRequest;
+    if (active == null) return;
+    // Capture the current requests before awaiting network I/O. New arrivals
+    // must always require another explicit approval.
+    final pending = [
+      active,
+      ..._roomKeyRequestQueue.where(
+        (request) =>
+            request.userId == active.userId &&
+            request.deviceId == active.deviceId,
+      ),
+    ];
+    for (final request in pending) {
+      await request.share();
+      if (identical(_activeRoomKeyRequest, request)) {
+        _advanceRoomKeyRequest();
+      } else {
+        _roomKeyRequestQueue.remove(request);
+        if (!_disposed) notifyListeners();
+      }
+    }
   }
 
   Future<void> rejectActiveRoomKey() async {

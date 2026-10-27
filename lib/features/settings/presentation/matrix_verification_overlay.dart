@@ -43,7 +43,10 @@ class MatrixVerificationOverlay extends StatelessWidget {
                 child: MatrixRoomKeyRequestDialog(
                   key: ObjectKey(roomKeyRequest),
                   request: roomKeyRequest,
+                  pendingCount:
+                      controller.pendingRoomKeyRequestsForActiveDevice,
                   onShare: controller.shareActiveRoomKey,
+                  onShareAll: controller.sharePendingRoomKeysForActiveDevice,
                   onReject: controller.rejectActiveRoomKey,
                 ),
               ),
@@ -58,12 +61,16 @@ class MatrixRoomKeyRequestDialog extends StatefulWidget {
   const MatrixRoomKeyRequestDialog({
     super.key,
     required this.request,
+    required this.pendingCount,
     required this.onShare,
+    required this.onShareAll,
     required this.onReject,
   });
 
   final MatrixRoomKeyRequestPort request;
+  final int pendingCount;
   final Future<void> Function() onShare;
+  final Future<void> Function() onShareAll;
   final Future<void> Function() onReject;
 
   @override
@@ -111,7 +118,11 @@ class _RoomKeyRequestDialogState extends State<MatrixRoomKeyRequestDialog> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Share only if this is your device and you just used “Request missing keys” there. This shares one encryption session, not your complete history.',
+              'Share only if this is your device and you just used “Request all missing keys” there. Each key you share lets this device read messages from that encryption session.',
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '${widget.pendingCount} key ${widget.pendingCount == 1 ? 'request is' : 'requests are'} pending from this device. “Share all” approves these pending requests once. New requests will still ask you.',
             ),
             const SizedBox(height: 12),
             const Text(
@@ -143,6 +154,11 @@ class _RoomKeyRequestDialogState extends State<MatrixRoomKeyRequestDialog> {
             key: const Key('share-room-key-request'),
             onPressed: _busy ? null : () => _run(widget.onShare),
             child: const Text('Share key'),
+          ),
+          TextButton(
+            key: const Key('share-all-room-key-requests'),
+            onPressed: _busy ? null : () => _run(widget.onShareAll),
+            child: const Text('Share all'),
           ),
         ],
       ),

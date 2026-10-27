@@ -13,7 +13,9 @@ void main() {
         theme: ThemeData(splashFactory: InkRipple.splashFactory),
         home: MatrixRoomKeyRequestDialog(
           request: request,
+          pendingCount: 2,
           onShare: request.share,
+          onShareAll: request.share,
           onReject: request.reject,
         ),
       ),
@@ -30,6 +32,30 @@ void main() {
 
     expect(request.shared, isTrue);
     expect(request.rejected, isFalse);
+  });
+
+  testWidgets('share all invokes the one-time pending request action', (
+    tester,
+  ) async {
+    final request = _KeyRequest();
+    var sharedAll = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MatrixRoomKeyRequestDialog(
+          request: request,
+          pendingCount: 3,
+          onShare: request.share,
+          onShareAll: () async => sharedAll = true,
+          onReject: request.reject,
+        ),
+      ),
+    );
+
+    expect(find.textContaining('3 key requests are pending'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('share-all-room-key-requests')));
+    await tester.pump();
+    expect(sharedAll, isTrue);
+    expect(request.shared, isFalse);
   });
 }
 
