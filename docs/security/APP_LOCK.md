@@ -5,8 +5,8 @@ by default, independent, and local to this installation. A room lock applies to
 that room across local profiles. Each lock can have its own custom credential.
 
 Available methods are device authentication (the system chooses available screen
-lock/biometric options), biometrics only, a 6–12 digit passcode, a password of at
-least 10 characters, or a 3×3 pattern of at least four distinct dots. Patterns can
+lock/biometric options), biometrics only, a passcode of one or more digits, any nonempty password, or a 3×3 pattern
+of one or more distinct dots. Credential length is chosen by the user. Patterns can
 be drawn or entered by tapping/keyboard activation, in order; repeated dots are
 ignored. Setup requires confirmation of custom credentials or a successful native
 authentication before enabling a device method. Changing or disabling an existing

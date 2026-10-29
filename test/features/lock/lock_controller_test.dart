@@ -93,9 +93,13 @@ void main() {
   });
 
   test('validates all custom credential formats', () {
-    expect(LockController.validate(LockMethod.passcode, '1234'), isNotNull);
+    expect(LockController.validate(LockMethod.passcode, '1'), isNull);
     expect(LockController.validate(LockMethod.passcode, '123456'), isNull);
-    expect(LockController.validate(LockMethod.password, 'short'), isNotNull);
+    expect(LockController.validate(LockMethod.password, 'x'), isNull);
+    expect(LockController.validate(LockMethod.passcode, ''), isNotNull);
+    expect(LockController.validate(LockMethod.passcode, 'a'), isNotNull);
+    expect(LockController.validate(LockMethod.password, ''), isNotNull);
+    expect(LockController.validate(LockMethod.pattern, '1'), isNull);
     expect(LockController.validate(LockMethod.pattern, '1123'), isNotNull);
     expect(LockController.validate(LockMethod.pattern, '1236'), isNull);
   });

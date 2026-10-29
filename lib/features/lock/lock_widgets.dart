@@ -251,10 +251,7 @@ class _SecretInputState extends State<SecretInput> {
             ? TextInputType.number
             : TextInputType.visiblePassword,
         inputFormatters: widget.method == LockMethod.passcode
-            ? [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(12),
-              ]
+            ? [FilteringTextInputFormatter.digitsOnly]
             : null,
         decoration: InputDecoration(
           labelText: widget.method.label,
@@ -274,7 +271,7 @@ class _SecretInputState extends State<SecretInput> {
     }
     return Column(
       children: [
-        const Text('Draw or tap at least 4 dots in order.'),
+        const Text('Draw or tap dots in order.'),
         SizedBox(
           width: 240,
           height: 240,
@@ -491,9 +488,7 @@ class _LockEditorState extends State<_LockEditor> {
             ] else
               const Padding(
                 padding: EdgeInsets.only(top: 16),
-                child: Text(
-                  'Uses enrolled device credentials. Any enrolled biometric can unlock; selecting a specific finger is not supported. Device screen lock may also offer biometrics.',
-                ),
+                child: Text('Uses your enrolled device credentials.'),
               ),
             if (error != null) Text(error!),
           ],

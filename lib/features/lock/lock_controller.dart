@@ -86,16 +86,15 @@ class LockController extends ChangeNotifier {
   }
 
   static String? validate(LockMethod method, String secret) => switch (method) {
-    LockMethod.passcode when !RegExp(r'^\d{6,12}$').hasMatch(secret) =>
-      'Use 6–12 digits.',
-    LockMethod.password when secret.length < 10 =>
-      'Use at least 10 characters.',
+    LockMethod.passcode when !RegExp(r'^\d+$').hasMatch(secret) =>
+      'Enter one or more digits.',
+    LockMethod.password when secret.isEmpty => 'Enter a password.',
     LockMethod.pattern
-        when secret.length < 4 ||
+        when secret.isEmpty ||
             secret.length > 9 ||
             !RegExp(r'^[1-9]+$').hasMatch(secret) ||
             secret.split('').toSet().length != secret.length =>
-      'Connect at least 4 different dots.',
+      'Choose one or more different dots.',
     _ => null,
   };
 
