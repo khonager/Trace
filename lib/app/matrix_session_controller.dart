@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:trace/app/installation_trust.dart';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -12,12 +13,43 @@ class MatrixSessionController extends ChangeNotifier
     with WidgetsBindingObserver {
   MatrixSessionController(
     this.client, {
+    this.installationTrust,
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
     Future<MatrixClientPort> Function(String profileId)? clientFactory,
   }) : _secureStorage = secureStorage,
        _clientFactory = clientFactory;
 
   MatrixClientPort client;
+  final InstallationTrust? installationTrust;
+  bool needsSessionConfirmation = false;
+
+  Future<void> _checkInstallation() async {
+    final userId = client.current.account?.userId;
+    if (installationTrust == null || userId == null) {
+      needsSessionConfirmation = false;
+      return;
+    }
+    try {
+      needsSessionConfirmation = !await installationTrust!.isConfirmed(userId);
+    } catch (_) {
+      needsSessionConfirmation = true;
+    }
+  }
+
+  Future<void> confirmRestoredSession() async {
+    final userId = client.current.account?.userId;
+    if (userId == null || installationTrust == null) return;
+    if (!await installationTrust!.authenticate()) {
+      throw Exception(
+        'Confirm with your device screen lock to open these chats.',
+      );
+    }
+    if (client.current.account?.userId != userId) return;
+    await installationTrust!.remember(userId);
+    needsSessionConfirmation = false;
+    notifyListeners();
+  }
+
   final FlutterSecureStorage _secureStorage;
   final Future<MatrixClientPort> Function(String profileId)? _clientFactory;
   final Map<String, String> _volatileStorage = {};
@@ -87,6 +119,7 @@ class MatrixSessionController extends ChangeNotifier
       },
     );
     await client.initialize();
+    await _checkInstallation();
     _snapshot = client.current;
     await _rememberCurrentAccount();
     try {
@@ -149,6 +182,9 @@ class MatrixSessionController extends ChangeNotifier
           loginToken: token,
         ),
       );
+      final userId = client.current.account?.userId;
+      if (userId != null) await installationTrust?.remember(userId);
+      needsSessionConfirmation = false;
       await _deleteHint('pending_sso_homeserver');
     } catch (error) {
       _actionError = error.toString().replaceFirst('Exception: ', '');
@@ -170,6 +206,9 @@ class MatrixSessionController extends ChangeNotifier
           password: password,
         ),
       );
+      final userId = client.current.account?.userId;
+      if (userId != null) await installationTrust?.remember(userId);
+      needsSessionConfirmation = false;
       await _writeHint(key: 'last_homeserver', value: homeserverUri.toString());
       await _writeHint(key: 'last_user', value: user.trim());
       _addingProfile = false;
@@ -180,6 +219,7 @@ class MatrixSessionController extends ChangeNotifier
   Future<void> logout() => _perform(() async {
     final removedId = _activeProfileId;
     await client.logout();
+    needsSessionConfirmation = false;
     await _clearVerifications();
     await _clearRoomKeyRequests();
     _savedProfiles = _savedProfiles
@@ -231,6 +271,7 @@ class MatrixSessionController extends ChangeNotifier
     final factory = _clientFactory;
     if (factory == null) throw Exception('Profile switching is unavailable.');
     _snapshot = const MatrixClientSnapshot.starting();
+    needsSessionConfirmation = installationTrust != null;
     notifyListeners();
     await _subscription?.cancel();
     _subscription = null;
@@ -245,6 +286,7 @@ class MatrixSessionController extends ChangeNotifier
     _activeProfileId = profileId;
     _bindClient();
     await client.initialize();
+    await _checkInstallation();
     _snapshot = client.current;
     if (persistSelection) {
       await _writeHint(key: 'active_profile_id', value: profileId);

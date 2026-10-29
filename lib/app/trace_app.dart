@@ -1,4 +1,5 @@
 import 'package:trace/features/lock/lock_widgets.dart';
+import 'package:trace/features/auth/presentation/restored_session_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:trace/app/matrix_session_controller.dart';
 import 'package:trace/app/trace_home_shell.dart';
@@ -89,10 +90,13 @@ class TraceApp extends StatelessWidget {
       ),
       builder: controller == null
           ? null
-          : (context, child) => LockHost(
-              child: MatrixVerificationOverlay(
-                controller: controller!,
-                child: child ?? const SizedBox.shrink(),
+          : (context, child) => RestoredSessionGate(
+              controller: controller!,
+              child: LockHost(
+                child: MatrixVerificationOverlay(
+                  controller: controller!,
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             ),
       home: controller == null

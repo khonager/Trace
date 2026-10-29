@@ -1,5 +1,7 @@
 package chat.trace.client
 
+import java.io.File
+import java.security.MessageDigest
 import android.content.ClipboardManager
 import android.content.Context
 import android.provider.OpenableColumns
@@ -11,6 +13,30 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat.trace/installation")
+            .setMethodCallHandler { call, result ->
+                val user = call.arguments as? String
+                if (user.isNullOrBlank()) {
+                    result.error("invalid_user", "Missing account", null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    val digest = MessageDigest.getInstance("SHA-256")
+                        .digest(user.toByteArray()).joinToString("") { "%02x".format(it) }
+                    val receipt = File(noBackupFilesDir, "trace-confirmed-$digest")
+                    when (call.method) {
+                        "isConfirmed" -> result.success(receipt.exists())
+                        "confirm" -> {
+                            receipt.writeText("1")
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (error: Exception) {
+                    result.error("storage_failed", "Could not confirm this installation", null)
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat.trace/clipboard")
             .setMethodCallHandler { call, result ->
                 if (call.method == "files") {
