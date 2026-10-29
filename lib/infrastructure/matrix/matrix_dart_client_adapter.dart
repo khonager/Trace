@@ -1200,12 +1200,69 @@ final class _MatrixDartTimeline implements MatrixTimelinePort {
     for (var index = 0; index < events.length; index += 4) {
       try {
         await Future.wait(
-          events.skip(index).take(4).map((event) => event.requestKey()),
+          events.skip(index).take(4).map((event) async {
+            await _timeline.room.client.encryption?.keyManager.request(
+              _timeline.room,
+              event.content['session_id'] as String,
+              event.content['sender_key'] as String,
+              onlineKeyBackupOnly: true,
+            );
+          }),
         );
       } catch (error) {
         firstError ??= error;
       }
     }
+    // A backup can contain only a later part of a session. The SDK stops
+    // after loading that key, even when older messages still need a peer key.
+    // Retry decryption before deciding which sessions still need peers.
+    final crypto = _timeline.room.client.encryption;
+    if (crypto != null) {
+      for (final original in List<matrix.Event>.of(_timeline.events)) {
+        if (original.type != matrix.EventTypes.Encrypted) continue;
+        final sessionId = original.content['session_id'] as String?;
+        final senderKey = original.content['sender_key'] as String?;
+        if (!requestedSessions.contains('$sessionId|$senderKey')) continue;
+        try {
+          final decrypted = await crypto.decryptRoomEvent(
+            original,
+            store: true,
+          );
+          final index = _timeline.events.indexWhere(
+            (event) => event.eventId == original.eventId,
+          );
+          if (index >= 0) _timeline.events[index] = decrypted;
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+      final remaining = <String>{};
+      for (final event in List<matrix.Event>.of(_timeline.events)) {
+        if (event.type != matrix.EventTypes.Encrypted ||
+            event.content['can_request_session'] != true) {
+          continue;
+        }
+        final sessionId = event.content['session_id'] as String?;
+        final senderKey = event.content['sender_key'] as String?;
+        final session = '$sessionId|$senderKey';
+        if (sessionId == null ||
+            !requestedSessions.contains(session) ||
+            !remaining.add(session)) {
+          continue;
+        }
+        try {
+          await crypto.keyManager.request(
+            _timeline.room,
+            sessionId,
+            senderKey,
+            tryOnlineBackup: false,
+          );
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+    }
+    refresh();
     if (firstError != null) throw firstError;
     return events.length;
   }
