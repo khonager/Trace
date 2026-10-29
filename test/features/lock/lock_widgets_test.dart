@@ -10,6 +10,35 @@ import 'package:trace/features/lock/lock_widgets.dart';
 
 void main() {
   testWidgets(
+    'hidden group removes chat names until unlocked and hides them again',
+    (tester) async {
+      final locks = LockController(
+        read: () async =>
+            '{"group:Private":{"method":"device","rooms":["maya"]}}',
+        authenticateDevice: (_) async => true,
+      );
+      await locks.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (_, child) => LockScope(controller: locks, child: child!),
+          home: const Scaffold(body: ChatsPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Maya'), findsNothing);
+      await locks.verify('group:Private');
+      await tester.pumpAndSettle();
+      expect(find.text('Maya'), findsWidgets);
+      locks.hideGroups();
+      await tester.pumpAndSettle();
+      expect(find.text('Maya'), findsNothing);
+      await tester.tap(find.byTooltip('Search').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Maya'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'protected chat previews and messages stay hidden in overview and search',
     (tester) async {
       final locks = LockController(

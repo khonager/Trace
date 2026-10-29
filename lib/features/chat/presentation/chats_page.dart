@@ -1,3 +1,5 @@
+import 'package:trace/features/lock/lock_controller.dart';
+import 'package:trace/features/lock/hidden_chats.dart';
 import 'package:trace/features/chat/application/reaction_shortcuts.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
@@ -71,6 +73,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   final ScrollController _overviewScrollController = ScrollController();
 
   late List<_Conversation> _conversations;
+  LockController? _locks;
   final _reactionStore = ReactionShortcuts();
   List<String> _reactionShortcuts = List.of(ReactionShortcuts.defaults);
 
@@ -269,6 +272,15 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _locks = LockScope.of(context);
+    if (widget.client != null) {
+      _applyRooms(_allRooms);
+    } else {
+      _conversations = _conversationCache.values
+          .where((room) => _locks?.hidden(room.id) != true)
+          .toList();
+      if (_activeConversation >= _conversations.length) _activeConversation = 0;
+    }
     if (_backgroundsPrecached) return;
     _backgroundsPrecached = true;
     for (final conversation in _conversations) {
@@ -1121,13 +1133,16 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         ? null
         : _conversations[_activeConversation].id;
     final updated = <_Conversation>[];
+    final accessibleRooms = rooms
+        .where((room) => _locks?.hidden(room.id) != true)
+        .toList();
     final visibleRooms = _selectedContextId == _peopleContextId
-        ? matrixDirectChatRooms(rooms)
+        ? matrixDirectChatRooms(accessibleRooms)
         : _selectedContextId == _groupsContextId
         ? matrixChatRoomsForSpace(
-            rooms,
+            accessibleRooms,
           ).where((room) => !room.isDirect).toList()
-        : matrixChatRoomsForSpace(rooms, spaceId: _selectedContextId);
+        : matrixChatRoomsForSpace(accessibleRooms, spaceId: _selectedContextId);
     for (final room in visibleRooms) {
       final existing = oldById[room.id];
       if (existing == null) {
@@ -1161,6 +1176,14 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
           ? -1
           : updated.indexWhere((room) => room.id == activeId);
       _activeConversation = activeIndex < 0 ? 0 : activeIndex;
+      if (activeId != null && activeIndex < 0) {
+        _drafts[activeId] = _composerController.text;
+        _composerController.text = updated.isEmpty
+            ? ''
+            : (_drafts[updated.first.id] ?? '');
+        _replyToEventId = null;
+        _replyToLabel = null;
+      }
       _manualBackgroundFromIndex = null;
     });
     if (_conversations.isNotEmpty) {
@@ -1173,7 +1196,10 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         .where(
           (room) =>
               room.isSpace &&
-              matrixChatRoomsForSpace(_allRooms, spaceId: room.id).isNotEmpty,
+              matrixChatRoomsForSpace(
+                _allRooms,
+                spaceId: room.id,
+              ).any((child) => _locks?.hidden(child.id) != true),
         )
         .toList(growable: true);
     final positions = {
@@ -1197,7 +1223,9 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     if (_selectedContextId == contextId) return;
     _selectedContextId = contextId;
     if (widget.client == null) {
-      final conversations = _conversationCache.values.toList(growable: true);
+      final conversations = _conversationCache.values
+          .where((room) => _locks?.hidden(room.id) != true)
+          .toList(growable: true);
       setState(() {
         _conversations = contextId == _peopleContextId
             ? conversations
@@ -2689,7 +2717,14 @@ class _ConversationView extends StatelessWidget {
                   IconButton(
                     tooltip: 'Chat lock',
                     icon: const Icon(Icons.lock_outline),
-                    onPressed: () => editLock(context, locks, conversation.id),
+                    onPressed: () =>
+                        editLock(context, locks, locks.ruleId(conversation.id)),
+                  ),
+                if (LockScope.of(context) case final locks?)
+                  IconButton(
+                    tooltip: 'Hide chat',
+                    icon: const Icon(Icons.visibility_off_outlined),
+                    onPressed: () => hideChat(context, locks, conversation.id),
                   ),
                 if (showMobileRailToggle)
                   IconButton(
@@ -5403,9 +5438,12 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
   Widget build(BuildContext context) {
     final locks = LockScope.of(context);
     final query = _controller.text.trim().toLowerCase();
+    final accessible = widget.conversations
+        .where((room) => locks?.hidden(room.id) != true)
+        .toList();
     final rooms = query.isEmpty
-        ? widget.conversations
-        : widget.conversations.where((room) {
+        ? accessible
+        : accessible.where((room) {
             if (locks?.enabled(room.id) == true) {
               return room.name.toLowerCase().contains(query);
             }

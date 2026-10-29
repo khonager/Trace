@@ -165,6 +165,8 @@ class _LockPromptState extends State<LockPrompt> {
               Text(
                 widget.id == LockController.app
                     ? 'Trace is locked'
+                    : widget.id.startsWith(LockController.groupPrefix)
+                    ? 'Unlock ${widget.locks.groupName(widget.id)} chats'
                     : 'Chat is locked',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
@@ -442,7 +444,13 @@ class _LockEditorState extends State<_LockEditor> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.id == LockController.app ? 'App lock' : 'Chat lock'),
+    title: Text(
+      widget.id == LockController.app
+          ? 'App lock'
+          : widget.id.startsWith(LockController.groupPrefix)
+          ? '${widget.locks.groupName(widget.id)} access'
+          : 'Chat lock',
+    ),
     content: SizedBox(
       width: 380,
       child: SingleChildScrollView(

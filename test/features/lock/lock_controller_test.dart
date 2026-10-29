@@ -5,6 +5,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/features/lock/lock_controller.dart';
 
 void main() {
+  test(
+    'group credentials reveal only their own chats and survive reload',
+    () async {
+      String? saved;
+      final locks = LockController(
+        read: () async => saved,
+        write: (value) async {
+          saved = value;
+        },
+      );
+      await locks.load();
+      await locks.configure('group:Work', LockMethod.pattern, secret: '1');
+      await locks.verify('group:Work', secret: '1');
+      await locks.assignRoom('work-room', 'group:Work');
+      await locks.configure('group:Private', LockMethod.passcode, secret: '2');
+      await locks.verify('group:Private', secret: '2');
+      await locks.assignRoom('private-room', 'group:Private');
+      locks.hideGroup('group:Private');
+      expect(locks.hidden('work-room'), isFalse);
+      expect(locks.hidden('private-room'), isTrue);
+      locks.hideGroups();
+      expect(locks.hidden('work-room'), isTrue);
+      expect(locks.hidden('private-room'), isTrue);
+      expect(await locks.verify('group:Work', secret: '2'), isFalse);
+      expect(await locks.verify('group:Work', secret: '1'), isTrue);
+      expect(locks.hidden('work-room'), isFalse);
+      expect(locks.hidden('private-room'), isTrue);
+      await expectLater(
+        locks.assignRoom('private-room', null),
+        throwsStateError,
+      );
+      final restored = LockController(read: () async => saved);
+      await restored.load();
+      expect(restored.hidden('work-room'), isTrue);
+      expect(restored.hidden('private-room'), isTrue);
+    },
+    // This exercises six real 600,000-iteration credential derivations.
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+
   test('defaults off; corrupt/unavailable storage fails closed', () async {
     final empty = LockController(read: () async => null);
     await empty.load();

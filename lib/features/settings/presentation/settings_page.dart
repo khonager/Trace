@@ -1,3 +1,4 @@
+import 'package:trace/features/lock/hidden_chats.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'missing_keys_tile.dart';
 import 'dart:async';
@@ -54,6 +55,7 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 20),
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
         const LockSettingsTile(),
+        HiddenChatsTile(client: controller?.client),
         const SizedBox(height: 24),
         if (account == null)
           const Text(

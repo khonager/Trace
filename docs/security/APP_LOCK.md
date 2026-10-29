@@ -52,3 +52,19 @@ storage, throttling, and stale authentication completion. Native biometric and
 app-switcher behavior still require Android/iOS device testing before release.
 
 Lock-screen layout reference: [phone screenshot](../screenshots/app-lock.png).
+
+## Hidden access groups
+
+Settings → Hidden chats creates named groups such as Work and Private, each with
+its own lock method and credential. The hide button in a chat assigns it to a
+group after that group's credential is checked. Chat names, avatars, previews,
+and search results are removed while the group is locked. Unlocking one group
+reveals only its member chats for the current foreground session. Leaving the app
+relocks groups; Hide all hides them immediately. Hidden groups and membership
+live with the secure lock settings and are local to this device.
+
+Unlock the group in Settings to remove a chat with Unhide or to change its lock.
+Turning off a group lock requires authentication and makes its chats visible
+again. An existing individual chat lock remains in storage and applies again
+when a chat leaves the group. These are local UI access controls; Matrix room
+membership and message encryption are unchanged.

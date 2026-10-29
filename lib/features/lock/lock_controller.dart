@@ -52,12 +52,44 @@ class LockController extends ChangeNotifier {
   int _failures = 0;
   DateTime? _retryAfter;
 
-  LockMethod? method(String id) => _rules[id] == null
+  static const groupPrefix = 'group:';
+  List<String> get groups =>
+      _rules.keys.where((id) => id.startsWith(groupPrefix)).toList();
+  String groupName(String id) => id.substring(groupPrefix.length);
+  List<String> groupRooms(String id) =>
+      List<String>.from(_rules[id]?['rooms'] ?? const <String>[]);
+  String? groupFor(String roomId) =>
+      groups.where((id) => groupRooms(id).contains(roomId)).firstOrNull;
+  String ruleId(String id) => groupFor(id) ?? id;
+  bool hidden(String roomId) {
+    final group = groupFor(roomId);
+    return group != null && locked(group);
+  }
+
+  LockMethod? method(String id) => _rules[ruleId(id)] == null
       ? null
-      : LockMethod.values.byName(_rules[id]['method'] as String);
-  bool enabled(String id) => _rules.containsKey(id);
-  bool locked(String id) => enabled(id) && !_unlocked.contains(id);
+      : LockMethod.values.byName(_rules[ruleId(id)]['method'] as String);
+  bool enabled(String id) => _rules.containsKey(ruleId(id));
+  bool locked(String id) => enabled(id) && !_unlocked.contains(ruleId(id));
   bool get hasLocks => _rules.isNotEmpty;
+
+  Future<void> assignRoom(String roomId, String? group) async {
+    final previous = groupFor(roomId);
+    if (!ready ||
+        (previous != null && locked(previous)) ||
+        (group != null && (!groups.contains(group) || locked(group)))) {
+      throw StateError('Unlock the group before changing its chats.');
+    }
+    final updated = Map<String, dynamic>.from(_rules);
+    for (final id in groups) {
+      final rooms = groupRooms(id)..remove(roomId);
+      if (id == group) rooms.add(roomId);
+      updated[id] = {..._rules[id] as Map<String, dynamic>, 'rooms': rooms};
+    }
+    await _write(jsonEncode(updated));
+    _rules = updated;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     try {
@@ -65,7 +97,18 @@ class LockController extends ChangeNotifier {
       final decoded = raw == null
           ? <String, dynamic>{}
           : jsonDecode(raw) as Map<String, dynamic>;
-      for (final rule in decoded.values) {
+      final assignedRooms = <String>{};
+      for (final entry in decoded.entries) {
+        final rule = entry.value;
+        if (entry.key.startsWith(groupPrefix)) {
+          final rooms = rule['rooms'];
+          if (rooms is! List ||
+              rooms.any(
+                (room) => room is! String || !assignedRooms.add(room),
+              )) {
+            throw const FormatException('Invalid hidden chat membership');
+          }
+        }
         final method = LockMethod.values.byName(rule['method'] as String);
         if (method.custom) {
           if (base64Decode(rule['salt'] as String).length != 16 ||
@@ -109,6 +152,7 @@ class LockController extends ChangeNotifier {
     if (authenticating || (_retryAfter?.isAfter(DateTime.now()) ?? false)) {
       return false;
     }
+    id = ruleId(id);
     final selected = candidate ?? method(id);
     if (selected == null) return true;
     authenticating = true;
@@ -169,6 +213,7 @@ class LockController extends ChangeNotifier {
       final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
       updated[id] = <String, dynamic>{
         'method': selected.name,
+        if (id.startsWith(groupPrefix)) 'rooms': groupRooms(id),
         if (selected.custom) 'salt': base64Encode(salt),
         if (selected.custom) 'hash': base64Encode(await _hash(secret, salt)),
       };
@@ -176,6 +221,20 @@ class LockController extends ChangeNotifier {
     await _write(jsonEncode(updated));
     _rules = updated;
     _unlocked.remove(id);
+    notifyListeners();
+  }
+
+  void hideGroup(String id) {
+    _epoch++;
+    _unlocked.remove(id);
+    if (resumeLock == id) resumeLock = null;
+    notifyListeners();
+  }
+
+  void hideGroups() {
+    _epoch++;
+    _unlocked.removeWhere((id) => id.startsWith(groupPrefix));
+    if (resumeLock?.startsWith(groupPrefix) == true) resumeLock = null;
     notifyListeners();
   }
 
