@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -21,6 +22,7 @@ extension LockMethodLabel on LockMethod {
 
 class LockController extends ChangeNotifier {
   LockController({
+    this.spaceIdleTimeout = const Duration(minutes: 2),
     Future<String?> Function()? read,
     Future<void> Function(String)? write,
     Future<bool> Function(bool)? authenticateDevice,
@@ -36,6 +38,22 @@ class LockController extends ChangeNotifier {
              biometricOnly: biometric,
              persistAcrossBackgrounding: false,
            ));
+
+  final Duration spaceIdleTimeout;
+  Timer? _spaceIdleTimer;
+
+  bool get hasOpenGroups => groups.any((id) => !locked(id));
+
+  void recordActivity() {
+    _spaceIdleTimer?.cancel();
+    if (hasOpenGroups) _spaceIdleTimer = Timer(spaceIdleTimeout, hideGroups);
+  }
+
+  @override
+  void dispose() {
+    _spaceIdleTimer?.cancel();
+    super.dispose();
+  }
 
   static const app = 'app';
   static const _key = 'trace.locks.v1';
@@ -72,6 +90,8 @@ class LockController extends ChangeNotifier {
   bool enabled(String id) => _rules.containsKey(ruleId(id));
   bool locked(String id) => enabled(id) && !_unlocked.contains(ruleId(id));
   bool get hasLocks => _rules.isNotEmpty;
+  bool get hasVisibleLocks =>
+      _rules.keys.any((id) => !id.startsWith(groupPrefix));
 
   Future<void> assignRoom(String roomId, String? group) async {
     final previous = groupFor(roomId);
@@ -88,6 +108,7 @@ class LockController extends ChangeNotifier {
     }
     await _write(jsonEncode(updated));
     _rules = updated;
+    if (group != null) _unlocked.remove(roomId);
     notifyListeners();
   }
 
@@ -180,6 +201,7 @@ class LockController extends ChangeNotifier {
         _failures = 0;
         _retryAfter = null;
         if (candidate == null) _unlocked.add(id);
+        recordActivity();
         if (resumeLock == id) resumeLock = null;
         notifyListeners();
       } else {
@@ -224,14 +246,56 @@ class LockController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> unlockSpace(LockMethod selected, String secret) async {
+    if (!selected.custom ||
+        authenticating ||
+        (_retryAfter?.isAfter(DateTime.now()) ?? false)) {
+      return null;
+    }
+    authenticating = true;
+    final epoch = _epoch;
+    try {
+      for (final id in groups.where((id) => method(id) == selected)) {
+        final rule = _rules[id];
+        final actual = await _hash(
+          secret,
+          base64Decode(rule['salt'] as String),
+        );
+        final expected = base64Decode(rule['hash'] as String);
+        var difference = actual.length ^ expected.length;
+        for (var i = 0; i < actual.length && i < expected.length; i++) {
+          difference |= actual[i] ^ expected[i];
+        }
+        if (epoch != _epoch) return null;
+        if (difference == 0) {
+          _failures = 0;
+          _retryAfter = null;
+          _unlocked.add(id);
+          recordActivity();
+          notifyListeners();
+          return id;
+        }
+      }
+      _failures++;
+      if (_failures >= 5) {
+        _retryAfter = DateTime.now().add(const Duration(seconds: 30));
+      }
+      return null;
+    } finally {
+      authenticating = false;
+    }
+  }
+
   void hideGroup(String id) {
     _epoch++;
     _unlocked.remove(id);
+    recordActivity();
     if (resumeLock == id) resumeLock = null;
     notifyListeners();
   }
 
   void hideGroups() {
+    _spaceIdleTimer?.cancel();
     _epoch++;
     _unlocked.removeWhere((id) => id.startsWith(groupPrefix));
     if (resumeLock?.startsWith(groupPrefix) == true) resumeLock = null;
@@ -239,10 +303,22 @@ class LockController extends ChangeNotifier {
   }
 
   void lockAll() {
+    if (resumeLock != null &&
+        (resumeLock!.startsWith(groupPrefix) ||
+            groupFor(resumeLock!) != null)) {
+      resumeLock = null;
+    }
+    _spaceIdleTimer?.cancel();
     _epoch++;
     // Cover open media/dialog routes when a previously unlocked chat relocks.
     resumeLock ??= _unlocked
-        .where((id) => id != app && enabled(id))
+        .where(
+          (id) =>
+              id != app &&
+              !id.startsWith(groupPrefix) &&
+              groupFor(id) == null &&
+              enabled(id),
+        )
         .firstOrNull;
     _unlocked.clear();
     notifyListeners();

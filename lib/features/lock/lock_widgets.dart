@@ -15,9 +15,15 @@ class LockScope extends InheritedNotifier<LockController> {
 }
 
 class LockHost extends StatefulWidget {
-  const LockHost({super.key, required this.child, this.controller});
+  const LockHost({
+    super.key,
+    required this.child,
+    this.controller,
+    this.onSpacesClosed,
+  });
   final Widget child;
   final LockController? controller;
+  final VoidCallback? onSpacesClosed;
   @override
   State<LockHost> createState() => _LockHostState();
 }
@@ -25,23 +31,46 @@ class LockHost extends StatefulWidget {
 class _LockHostState extends State<LockHost> with WidgetsBindingObserver {
   late final LockController locks = widget.controller ?? LockController();
   bool obscured = false;
+  bool _concealSpace = false;
+  Set<String> _openSpaces = {};
+
+  void _spacesChanged() {
+    final open = locks.groups.where((id) => !locks.locked(id)).toSet();
+    final closed = _openSpaces.any((id) => !open.contains(id));
+    _openSpaces = open;
+    if (closed) widget.onSpacesClosed?.call();
+  }
+
+  bool _keyActivity(KeyEvent event) {
+    locks.recordActivity();
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _openSpaces = locks.groups.where((id) => !locks.locked(id)).toSet();
+    locks.addListener(_spacesChanged);
+    HardwareKeyboard.instance.addHandler(_keyActivity);
     if (!locks.ready) unawaited(locks.load());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    locks.removeListener(_spacesChanged);
+    HardwareKeyboard.instance.removeHandler(_keyActivity);
     if (widget.controller == null) locks.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    setState(() => obscured = state != AppLifecycleState.resumed);
+    setState(() {
+      obscured = state != AppLifecycleState.resumed;
+      _concealSpace = obscured && (_concealSpace || locks.hasOpenGroups);
+    });
     // Native authentication itself temporarily makes the app inactive.
     if (!locks.authenticating && state != AppLifecycleState.resumed) {
       locks.lockAll();
@@ -62,14 +91,21 @@ class _LockHostState extends State<LockHost> with WidgetsBindingObserver {
             ? LockController.app
             : locks.resumeLock;
         final covered =
-            !locks.ready || (obscured && locks.hasLocks) || id != null;
+            !locks.ready ||
+            (obscured && (locks.hasVisibleLocks || _concealSpace)) ||
+            id != null;
         return Stack(
           children: [
             Offstage(
               offstage: covered,
               child: ExcludeFocus(
                 excluding: covered,
-                child: TickerMode(enabled: !covered, child: widget.child),
+                child: Listener(
+                  onPointerDown: (_) => locks.recordActivity(),
+                  onPointerMove: (_) => locks.recordActivity(),
+                  onPointerSignal: (_) => locks.recordActivity(),
+                  child: TickerMode(enabled: !covered, child: widget.child),
+                ),
               ),
             ),
             if (covered)
@@ -92,9 +128,11 @@ class _LockHostState extends State<LockHost> with WidgetsBindingObserver {
                                   ),
                           )
                         : obscured
-                        ? const Center(
-                            child: Icon(Icons.lock_outline, size: 48),
-                          )
+                        ? locks.hasVisibleLocks
+                              ? const Center(
+                                  child: Icon(Icons.lock_outline, size: 48),
+                                )
+                              : const SizedBox.expand()
                         : LockPrompt(key: ValueKey(id), locks: locks, id: id!),
                   ),
                 ),
@@ -333,6 +371,7 @@ class ChatLockGuard extends StatelessWidget {
   Widget build(BuildContext context) {
     final locks = LockScope.of(context);
     if (locks == null) return child;
+    if (locks.hidden(id)) return const SizedBox.shrink();
     if (locks.locked(id)) {
       return Material(
         child: LockPrompt(locks: locks, id: id),
@@ -461,12 +500,23 @@ class _LockEditorState extends State<_LockEditor> {
             const Text(
               'Optional, on this device only. Locks again when you leave the app. Keep custom credentials safe: Trace cannot recover them.',
             ),
+            if (widget.id.startsWith(LockController.groupPrefix))
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Use a different credential for each space. App lock is independent.',
+                ),
+              ),
             const SizedBox(height: 16),
             DropdownButtonFormField<LockMethod>(
               initialValue: selected,
               isExpanded: true,
               items: [
-                for (final method in LockMethod.values)
+                for (final method in LockMethod.values.where(
+                  (method) =>
+                      !widget.id.startsWith(LockController.groupPrefix) ||
+                      method.custom,
+                ))
                   DropdownMenuItem(value: method, child: Text(method.label)),
               ],
               onChanged: busy

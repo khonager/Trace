@@ -53,9 +53,20 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 16),
         const Icon(Icons.settings_outlined, size: 28),
         const SizedBox(height: 20),
-        Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
+        GestureDetector(
+          excludeFromSemantics: true,
+          onLongPress: () {
+            final locks = LockScope.of(context);
+            if (locks != null) {
+              showPrivateAccess(context, locks, controller?.client);
+            }
+          },
+          child: Text(
+            'Settings',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+        ),
         const LockSettingsTile(),
-        HiddenChatsTile(client: controller?.client),
         const SizedBox(height: 24),
         if (account == null)
           const Text(

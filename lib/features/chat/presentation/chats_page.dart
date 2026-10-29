@@ -1,5 +1,4 @@
 import 'package:trace/features/lock/lock_controller.dart';
-import 'package:trace/features/lock/hidden_chats.dart';
 import 'package:trace/features/chat/application/reaction_shortcuts.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
@@ -2720,12 +2719,6 @@ class _ConversationView extends StatelessWidget {
                     onPressed: () =>
                         editLock(context, locks, locks.ruleId(conversation.id)),
                   ),
-                if (LockScope.of(context) case final locks?)
-                  IconButton(
-                    tooltip: 'Hide chat',
-                    icon: const Icon(Icons.visibility_off_outlined),
-                    onPressed: () => hideChat(context, locks, conversation.id),
-                  ),
                 if (showMobileRailToggle)
                   IconButton(
                     key: const Key('mobile-chat-rail-toggle'),
@@ -5441,6 +5434,9 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
     final accessible = widget.conversations
         .where((room) => locks?.hidden(room.id) != true)
         .toList();
+    final visibleMessages = _messageResults
+        .where((result) => locks?.enabled(result.roomId) != true)
+        .toList();
     final rooms = query.isEmpty
         ? accessible
         : accessible.where((room) {
@@ -5512,11 +5508,9 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
                         },
                       ),
                   ],
-                  if (_messageResults.isNotEmpty) ...[
+                  if (visibleMessages.isNotEmpty) ...[
                     const _SearchSectionLabel('Cached messages'),
-                    for (final result in _messageResults.where(
-                      (result) => locks?.enabled(result.roomId) != true,
-                    ))
+                    for (final result in visibleMessages)
                       ListTile(
                         leading: const Icon(Icons.message_outlined),
                         title: Text(result.roomName),
@@ -5531,7 +5525,7 @@ class _RoomSearchDialogState extends State<_RoomSearchDialog> {
                   if (query.isNotEmpty &&
                       rooms.isEmpty &&
                       _people.isEmpty &&
-                      _messageResults.isEmpty)
+                      visibleMessages.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(

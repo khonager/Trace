@@ -15,6 +15,7 @@ void main() {
           saved = value;
         },
       );
+      addTearDown(locks.dispose);
       await locks.load();
       await locks.configure('group:Work', LockMethod.pattern, secret: '1');
       await locks.verify('group:Work', secret: '1');
@@ -28,8 +29,8 @@ void main() {
       locks.hideGroups();
       expect(locks.hidden('work-room'), isTrue);
       expect(locks.hidden('private-room'), isTrue);
-      expect(await locks.verify('group:Work', secret: '2'), isFalse);
-      expect(await locks.verify('group:Work', secret: '1'), isTrue);
+      expect(await locks.unlockSpace(LockMethod.pattern, '2'), isNull);
+      expect(await locks.unlockSpace(LockMethod.pattern, '1'), 'group:Work');
       expect(locks.hidden('work-room'), isFalse);
       expect(locks.hidden('private-room'), isTrue);
       await expectLater(

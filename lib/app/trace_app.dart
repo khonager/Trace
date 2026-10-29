@@ -1,3 +1,4 @@
+import 'package:trace/features/lock/privacy_routes.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'package:trace/features/auth/presentation/restored_session_gate.dart';
 import 'package:flutter/material.dart';
@@ -56,7 +57,7 @@ void runTraceBootstrapError(Object error) {
   );
 }
 
-class TraceApp extends StatelessWidget {
+class TraceApp extends StatefulWidget {
   const TraceApp({super.key, this.controller});
 
   /// Null keeps the interaction prototype available to isolated widget tests.
@@ -64,8 +65,19 @@ class TraceApp extends StatelessWidget {
   final MatrixSessionController? controller;
 
   @override
+  State<TraceApp> createState() => _TraceAppState();
+}
+
+class _TraceAppState extends State<TraceApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _privacyRoutes = PrivacyRoutes();
+  MatrixSessionController? get controller => widget.controller;
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
+      navigatorObservers: [_privacyRoutes],
       title: 'Trace',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -93,6 +105,7 @@ class TraceApp extends StatelessWidget {
           : (context, child) => RestoredSessionGate(
               controller: controller!,
               child: LockHost(
+                onSpacesClosed: _privacyRoutes.closeTransientRoutes,
                 child: MatrixVerificationOverlay(
                   controller: controller!,
                   child: child ?? const SizedBox.shrink(),

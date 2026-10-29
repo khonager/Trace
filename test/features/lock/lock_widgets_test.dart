@@ -17,6 +17,7 @@ void main() {
             '{"group:Private":{"method":"device","rooms":["maya"]}}',
         authenticateDevice: (_) async => true,
       );
+      addTearDown(locks.dispose);
       await locks.load();
       await tester.pumpWidget(
         MaterialApp(

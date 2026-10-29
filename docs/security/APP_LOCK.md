@@ -53,18 +53,29 @@ app-switcher behavior still require Android/iOS device testing before release.
 
 Lock-screen layout reference: [phone screenshot](../screenshots/app-lock.png).
 
-## Hidden access groups
+## Discreet spaces
 
-Settings → Hidden chats creates named groups such as Work and Private, each with
-its own lock method and credential. The hide button in a chat assigns it to a
-group after that group's credential is checked. Chat names, avatars, previews,
-and search results are removed while the group is locked. Unlocking one group
-reveals only its member chats for the current foreground session. Leaving the app
-relocks groups; Hide all hides them immediately. Hidden groups and membership
-live with the secure lock settings and are local to this device.
+The ordinary UI has no hidden-chat setting, icon, group list, or hint. Long-press
+its **Settings** heading to open the neutral Access dialog. **Set up** creates a
+space with a name and its own passcode, password, or pattern. This works with
+app lock off. To reopen it, use the same gesture, select the credential type,
+and enter that space's credential. Only the matching space opens; other names
+and memberships are never listed in this dialog.
 
-Unlock the group in Settings to remove a chat with Unhide or to change its lock.
-Turning off a group lock requires authentication and makes its chats visible
-again. An existing individual chat lock remains in storage and applies again
-when a chat leaves the group. These are local UI access controls; Matrix room
-membership and message encryption are unchanged.
+After unlocking, select the chats that belong in that space. Done returns to
+the app with those chats visible. Close space hides them immediately. App
+backgrounding and two minutes without pointer or keyboard activity also close
+all spaces. Transient routes (including private images and dialogs) are removed
+immediately, without a reverse animation revealing private content. Resuming
+shows the ordinary app and does not present a space unlock prompt.
+
+Chat names, avatars, previews, and search results are absent while their space
+is closed. Membership and salted credential verifiers live in local secure
+storage. An existing individual chat lock is retained and applies again if the
+chat leaves its space. Matrix room membership and encryption are unchanged.
+These are UI privacy controls, not concealment from someone inspecting app data
+with privileged access. Known gestures remain discoverable to someone who
+already knows the feature.
+
+The management dialog is shown only after access succeeds. Its phone layout is
+captured in [the space controls screenshot](../screenshots/hidden-chats.png).
