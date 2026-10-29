@@ -55,10 +55,10 @@ Lock-screen layout reference: [phone screenshot](../screenshots/app-lock.png).
 
 ## Discreet spaces
 
-The ordinary UI has no hidden-chat setting, icon, group list, or hint. Long-press
-its **Settings** heading to open the neutral Access dialog. **Set up** creates a
+The ordinary UI has no hidden-chat setting, icon, group list, or hint. Hold
+**App lock** in Settings for three seconds to open the neutral Access dialog. **Set up** creates a
 space with a name and its own passcode, password, or pattern. This works with
-app lock off. To reopen it, use the same gesture, select the credential type,
+app lock off. A normal tap still opens ordinary app-lock settings. To reopen it, use the same gesture, select the credential type,
 and enter that space's credential. Only the matching space opens; other names
 and memberships are never listed in this dialog.
 

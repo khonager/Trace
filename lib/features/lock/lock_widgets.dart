@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:trace/features/lock/lock_controller.dart';
 
@@ -382,17 +383,37 @@ class ChatLockGuard extends StatelessWidget {
 }
 
 class LockSettingsTile extends StatelessWidget {
-  const LockSettingsTile({super.key, this.id = LockController.app});
+  const LockSettingsTile({
+    super.key,
+    this.id = LockController.app,
+    this.onPrivateAccess,
+  });
   final String id;
+  final VoidCallback? onPrivateAccess;
   @override
   Widget build(BuildContext context) {
     final locks = LockScope.of(context);
     if (locks == null) return const SizedBox.shrink();
-    return ListTile(
+    final tile = ListTile(
       leading: const Icon(Icons.lock_outline),
       title: Text(id == LockController.app ? 'App lock' : 'Chat lock'),
       subtitle: Text(locks.method(id)?.label ?? 'Off'),
       onTap: () => editLock(context, locks, id),
+    );
+    if (onPrivateAccess == null) return tile;
+    return RawGestureDetector(
+      // A deliberate three-second hold; ordinary taps still edit app lock.
+      excludeFromSemantics: true,
+      gestures: {
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+              () => LongPressGestureRecognizer(
+                duration: const Duration(seconds: 3),
+              ),
+              (recognizer) => recognizer.onLongPress = onPrivateAccess,
+            ),
+      },
+      child: tile,
     );
   }
 }

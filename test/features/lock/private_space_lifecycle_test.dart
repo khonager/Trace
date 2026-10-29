@@ -23,7 +23,24 @@ void main() {
       );
       expect(find.text('Hidden chats'), findsNothing);
       expect(find.text('Private'), findsNothing);
+      expect(locks.enabled(LockController.app), isFalse);
+      await tester.tap(find.text('App lock'));
+      await tester.pumpAndSettle();
+      expect(find.text('Access'), findsNothing);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      // The old heading gesture and an ordinary long press do nothing.
       await tester.longPress(find.text('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Access'), findsNothing);
+      final hold = await tester.startGesture(
+        tester.getCenter(find.text('App lock')),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('Access'), findsNothing);
+      await tester.pump(const Duration(seconds: 1));
+      await hold.up();
       await tester.pumpAndSettle();
       expect(find.text('Access'), findsOneWidget);
       expect(find.text('Private'), findsNothing);

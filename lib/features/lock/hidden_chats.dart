@@ -3,7 +3,7 @@ import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'lock_controller.dart';
 import 'lock_widgets.dart';
 
-/// Reached only by the unlabelled long press on the Settings heading.
+/// Reached only by the unlabelled three-second hold on App lock.
 Future<void> showPrivateAccess(
   BuildContext context,
   LockController locks,
