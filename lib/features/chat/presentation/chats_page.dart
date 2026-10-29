@@ -1,3 +1,4 @@
+import 'package:trace/features/chat/application/reaction_shortcuts.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
@@ -28,16 +29,6 @@ const double _chatAvatarRightInset = 16;
 const double _desktopSplitBreakpoint = 900;
 const String _peopleContextId = 'trace:people';
 const String _groupsContextId = 'trace:groups';
-const List<String> _commonReactions = [
-  '👍',
-  '❤️',
-  '😂',
-  '😮',
-  '😢',
-  '🙏',
-  '🎉',
-  '🔥',
-];
 
 enum _ReactionPickerAction { custom }
 
@@ -80,6 +71,44 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   final ScrollController _overviewScrollController = ScrollController();
 
   late List<_Conversation> _conversations;
+  final _reactionStore = ReactionShortcuts();
+  List<String> _reactionShortcuts = List.of(ReactionShortcuts.defaults);
+
+  Future<void> _loadReactionShortcuts() async {
+    try {
+      final shortcuts = await _reactionStore.load();
+      if (mounted) setState(() => _reactionShortcuts = shortcuts);
+    } catch (_) {
+      /* Defaults remain usable without preference storage. */
+    }
+  }
+
+  void _replyToMessage(_ChatMessage message) {
+    if (message.eventId == null || message.isSystem) return;
+    setState(() {
+      _replyToEventId = message.eventId;
+      _replyToLabel = 'Replying to ${message.senderName ?? 'message'}';
+    });
+  }
+
+  Future<void> _reactDefault(_ChatMessage message) async {
+    if (message.eventId == null || message.isSystem || _conversations.isEmpty) {
+      return;
+    }
+    try {
+      await _timelines[_conversations[_activeConversation].id]?.toggleReaction(
+        message.eventId!,
+        _reactionShortcuts.first,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not react. Try again.')),
+        );
+      }
+    }
+  }
+
   List<MatrixRoom> _allRooms = const [];
   final Map<String, _Conversation> _conversationCache = {};
   String? _selectedContextId;
@@ -113,6 +142,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadReactionShortcuts());
     _mediaSearch = widget.mediaSearch ?? ConfiguredMediaSearchClient();
     _mediaFavoriteStore =
         widget.mediaFavoriteStore ?? SharedPreferencesMediaFavoriteStore();
@@ -507,7 +537,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             ),
             ListTile(
               leading: Text(
-                message.reactionByMe ?? '👍',
+                _reactionShortcuts.first,
                 style: const TextStyle(fontSize: 23),
               ),
               title: Text(
@@ -584,57 +614,102 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     final choice = await showModalBottomSheet<Object>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Choose a reaction',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  for (final emoji in _commonReactions)
-                    ChoiceChip(
-                      key: Key('reaction-$emoji'),
-                      label: Text(emoji, style: const TextStyle(fontSize: 24)),
-                      selected: selectedEmoji == emoji,
-                      tooltip: selectedEmoji == emoji
-                          ? 'Remove $emoji reaction'
-                          : 'React with $emoji',
-                      onSelected: (_) => Navigator.pop(context, emoji),
-                    ),
-                  if (selectedEmoji != null &&
-                      !_commonReactions.contains(selectedEmoji))
-                    ChoiceChip(
-                      key: const Key('current-custom-reaction'),
-                      label: Text(
-                        selectedEmoji,
-                        style: const TextStyle(fontSize: 24),
+      builder: (context) => StatefulBuilder(
+        builder: (context, updateSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Choose a reaction',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Hold a shortcut to replace it. The first emoji is your double-tap reaction.',
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (
+                      var index = 0;
+                      index < _reactionShortcuts.length;
+                      index++
+                    )
+                      Builder(
+                        builder: (context) {
+                          final emoji = _reactionShortcuts[index];
+                          return GestureDetector(
+                            onLongPress: () async {
+                              final replacement = await _askForCustomReaction();
+                              if (replacement == null ||
+                                  !mounted ||
+                                  !context.mounted) {
+                                return;
+                              }
+                              final updated = List<String>.of(
+                                _reactionShortcuts,
+                              )..[index] = replacement;
+                              try {
+                                await _reactionStore.save(updated);
+                                if (!mounted || !context.mounted) return;
+                                setState(() => _reactionShortcuts = updated);
+                                updateSheet(() {});
+                              } catch (_) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Could not save shortcut. Try again.',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            child: ChoiceChip(
+                              key: Key('reaction-$emoji'),
+                              label: Text(
+                                emoji,
+                                style: const TextStyle(fontSize: 24),
+                              ),
+                              selected: selectedEmoji == emoji,
+                              onSelected: (_) => Navigator.pop(context, emoji),
+                            ),
+                          );
+                        },
                       ),
-                      selected: true,
-                      tooltip: 'Remove $selectedEmoji reaction',
-                      onSelected: (_) => Navigator.pop(context, selectedEmoji),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                key: const Key('custom-reaction'),
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.add_reaction_outlined),
-                title: const Text('Use another emoji'),
-                subtitle: const Text('Paste or type any emoji'),
-                onTap: () =>
-                    Navigator.pop(context, _ReactionPickerAction.custom),
-              ),
-            ],
+                    if (selectedEmoji != null &&
+                        !_reactionShortcuts.contains(selectedEmoji))
+                      ChoiceChip(
+                        key: const Key('current-custom-reaction'),
+                        label: Text(
+                          selectedEmoji,
+                          style: const TextStyle(fontSize: 24),
+                        ),
+                        selected: true,
+                        tooltip: 'Remove $selectedEmoji reaction',
+                        onSelected: (_) =>
+                            Navigator.pop(context, selectedEmoji),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  key: const Key('custom-reaction'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.add_reaction_outlined),
+                  title: const Text('Use another emoji'),
+                  subtitle: const Text('Paste or type any emoji'),
+                  onTap: () =>
+                      Navigator.pop(context, _ReactionPickerAction.custom),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1457,6 +1532,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               onComposerChanged: _composerChanged,
               onLoadOlder: _loadOlder,
               onMessageLongPress: _showMessageActions,
+              onMessageTap: _replyToMessage,
+              onMessageDoubleTap: _reactDefault,
               onLoadAttachment: _loadAttachment,
               onLoadMediaThumbnail: _loadMediaThumbnail,
               cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -1632,6 +1709,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         onComposerChanged: _composerChanged,
                         onLoadOlder: _loadOlder,
                         onMessageLongPress: _showMessageActions,
+                        onMessageTap: _replyToMessage,
+                        onMessageDoubleTap: _reactDefault,
                         onLoadAttachment: _loadAttachment,
                         onLoadMediaThumbnail: _loadMediaThumbnail,
                         cachedMediaThumbnail: _cachedMediaThumbnail,
@@ -2202,6 +2281,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
+    required this.onMessageTap,
+    required this.onMessageDoubleTap,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2240,6 +2321,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
+  final ValueChanged<_ChatMessage> onMessageTap;
+  final ValueChanged<_ChatMessage> onMessageDoubleTap;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2281,6 +2364,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
         onComposerChanged: onComposerChanged,
         onLoadOlder: onLoadOlder,
         onMessageLongPress: onMessageLongPress,
+        onMessageTap: onMessageTap,
+        onMessageDoubleTap: onMessageDoubleTap,
         onLoadAttachment: onLoadAttachment,
         onLoadMediaThumbnail: onLoadMediaThumbnail,
         cachedMediaThumbnail: cachedMediaThumbnail,
@@ -2517,6 +2602,8 @@ class _ConversationView extends StatelessWidget {
     required this.onComposerChanged,
     required this.onLoadOlder,
     required this.onMessageLongPress,
+    required this.onMessageTap,
+    required this.onMessageDoubleTap,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.cachedMediaThumbnail,
@@ -2554,6 +2641,8 @@ class _ConversationView extends StatelessWidget {
   final ValueChanged<String> onComposerChanged;
   final AsyncCallback onLoadOlder;
   final ValueChanged<_ChatMessage> onMessageLongPress;
+  final ValueChanged<_ChatMessage> onMessageTap;
+  final ValueChanged<_ChatMessage> onMessageDoubleTap;
   final Future<MatrixAttachmentData> Function(_ChatMessage, {bool thumbnail})
   onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
@@ -2822,6 +2911,8 @@ class _ConversationView extends StatelessWidget {
                             showTimestamp: _isToday(message.timestamp),
                             showSenderIdentity: !conversation.isDirect,
                             onLongPress: () => onMessageLongPress(message),
+                            onTap: () => onMessageTap(message),
+                            onDoubleTap: () => onMessageDoubleTap(message),
                             onLoadAttachment: () =>
                                 onLoadAttachment(message, thumbnail: true),
                             onLoadMediaThumbnail: onLoadMediaThumbnail,
@@ -3263,6 +3354,8 @@ class _MessageBubble extends StatefulWidget {
     required this.showTimestamp,
     required this.showSenderIdentity,
     required this.onLongPress,
+    required this.onTap,
+    required this.onDoubleTap,
     required this.onLoadAttachment,
     required this.onLoadMediaThumbnail,
     required this.onOpenProfilePicture,
@@ -3276,6 +3369,8 @@ class _MessageBubble extends StatefulWidget {
   final bool showTimestamp;
   final bool showSenderIdentity;
   final VoidCallback onLongPress;
+  final VoidCallback onTap;
+  final VoidCallback onDoubleTap;
   final Future<MatrixAttachmentData> Function() onLoadAttachment;
   final Future<Uint8List> Function(Uri) onLoadMediaThumbnail;
   final _OpenProfilePicture onOpenProfilePicture;
@@ -3346,11 +3441,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
           ],
           Flexible(
             child: GestureDetector(
-              onTap:
-                  widget.message.kind == MatrixMessageKind.text ||
-                      widget.message.kind == MatrixMessageKind.image
+              onTap: widget.message.isSystem
                   ? null
-                  : widget.onSaveAttachment,
+                  : switch (widget.message.kind) {
+                      MatrixMessageKind.text => widget.onTap,
+                      MatrixMessageKind.image => null,
+                      _ => widget.onSaveAttachment,
+                    },
+              onDoubleTap: widget.message.isSystem ? null : widget.onDoubleTap,
               onLongPress: widget.onLongPress,
               child: Container(
                 key: Key(

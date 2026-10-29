@@ -1,9 +1,57 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('single tap replies and double tap only reacts', (tester) async {
+    final timeline = _ReactionTimeline(_message());
+    await _pumpChat(tester, timeline);
+    final message = find.byKey(const Key('message-surface-event-1'));
+    await tester.tap(message);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('Replying to Alice'), findsOneWidget);
+    await tester.tap(message);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(message);
+    await tester.pumpAndSettle();
+    expect(timeline.toggles, const [('event-1', '👍')]);
+  });
+
+  testWidgets('holding the first shortcut replaces and persists the default', (
+    tester,
+  ) async {
+    final timeline = _ReactionTimeline(_message());
+    await _pumpChat(tester, timeline);
+    await tester.longPress(find.text('Hello from Matrix').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('React'));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const Key('reaction-👍')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('custom-reaction-input')),
+      '🫡',
+    );
+    await tester.tap(find.byKey(const Key('confirm-custom-reaction')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('reaction-🫡')), findsOneWidget);
+    expect(timeline.toggles, isEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('chat.reactionShortcuts.v1')!.first, '🫡');
+    Navigator.of(tester.element(find.byKey(const Key('reaction-🫡')))).pop();
+    await tester.pumpAndSettle();
+    final message = find.byKey(const Key('message-surface-event-1'));
+    await tester.tap(message);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(message);
+    await tester.pumpAndSettle();
+    expect(timeline.toggles, const [('event-1', '🫡')]);
+  });
+
   testWidgets('sends a custom Matrix reaction from the message menu', (
     tester,
   ) async {
