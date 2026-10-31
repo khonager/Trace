@@ -1,3 +1,5 @@
+import 'audio_message.dart';
+import 'voice_message_dialog.dart';
 import 'package:trace/features/lock/lock_controller.dart';
 import 'package:trace/features/chat/application/reaction_shortcuts.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
@@ -255,8 +257,28 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
     unawaited(_composerActionPinStore.save(updated).catchError((_) {}));
   }
 
+  Future<void> _recordVoiceMessage() async {
+    final client = widget.client;
+    if (client == null || _attachmentBusy || _conversations.isEmpty) return;
+    final roomId = _conversations[_activeConversation].id;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => VoiceMessageDialog(
+        send: (bytes) => client.sendFile(
+          roomId: roomId,
+          name: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
+          bytes: bytes,
+          mimeType: 'audio/wav',
+        ),
+      ),
+    );
+  }
+
   void _runComposerAction(ComposerAction action) {
     switch (action) {
+      case ComposerAction.voiceMessage:
+        unawaited(_recordVoiceMessage());
       case ComposerAction.attachFile:
         unawaited(_sendAttachment());
       case ComposerAction.attachPhoto:
@@ -3564,6 +3586,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                                     widget.message.body)
                                 .startsWith('sticker-'),
                       )
+                    else if (widget.message.kind == MatrixMessageKind.audio)
+                      AudioMessage(
+                        key: ValueKey(widget.message.eventId),
+                        load: widget.onLoadAttachment,
+                        name:
+                            widget.message.attachmentName ??
+                            widget.message.body,
+                      )
                     else if (widget.message.kind != MatrixMessageKind.text)
                       _FileAttachment(
                         message: widget.message,
@@ -4396,6 +4426,7 @@ class _MessageComposerState extends State<_MessageComposer> {
 }
 
 String _composerActionLabel(ComposerAction action) => switch (action) {
+  ComposerAction.voiceMessage => 'Record voice message',
   ComposerAction.attachFile => 'Attach file',
   ComposerAction.attachPhoto => 'Attach photo',
   ComposerAction.gifSearch => 'Search GIFs',
@@ -4403,6 +4434,7 @@ String _composerActionLabel(ComposerAction action) => switch (action) {
 };
 
 String _composerActionShortLabel(ComposerAction action) => switch (action) {
+  ComposerAction.voiceMessage => 'Voice',
   ComposerAction.attachFile => 'File',
   ComposerAction.attachPhoto => 'Photo',
   ComposerAction.gifSearch => 'GIF',
@@ -4410,6 +4442,7 @@ String _composerActionShortLabel(ComposerAction action) => switch (action) {
 };
 
 IconData _composerActionIcon(ComposerAction action) => switch (action) {
+  ComposerAction.voiceMessage => Icons.mic_outlined,
   ComposerAction.attachFile => Icons.attach_file,
   ComposerAction.attachPhoto => Icons.photo_library_outlined,
   ComposerAction.gifSearch => Icons.gif_box_outlined,

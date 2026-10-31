@@ -39,6 +39,12 @@
             pkg-config
             gtk3
             libsecret
+            gst_all_1.gstreamer
+            gst_all_1.gst-plugins-base
+            gst_all_1.gst-plugins-good
+            gst_all_1.gst-libav
+            pulseaudio
+            ffmpeg
           ];
 
           ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";

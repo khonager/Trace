@@ -1,6 +1,12 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum ComposerAction { attachFile, attachPhoto, gifSearch, stickerSearch }
+enum ComposerAction {
+  attachFile,
+  attachPhoto,
+  voiceMessage,
+  gifSearch,
+  stickerSearch,
+}
 
 abstract interface class ComposerActionPinStore {
   Future<List<ComposerAction>> load();
