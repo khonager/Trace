@@ -155,7 +155,7 @@ items as implemented.
 
 ## Audio and voice messages
 
-- [ ] `MATRIX` Record and send voice messages
+- [x] `MATRIX` Record and send voice messages (explicit record/stop/send controls; WAV m.audio)
 - [ ] `MATRIX+TRACE` Hold-to-record, slide-to-cancel, and lock-to-record gestures
 - [ ] `MATRIX+TRACE` Pause and resume recording
 - [ ] `MATRIX+TRACE` Recording preview and trimming
@@ -187,7 +187,7 @@ items as implemented.
 
 ## Voice and video calling
 
-- [ ] `MATRIX` One-to-one voice calls
+- [x] `MATRIX` One-to-one voice calls (foreground legacy Matrix VoIP; device interoperability testing pending)
 - [ ] `MATRIX` One-to-one video calls
 - [ ] `MSC` Group voice calls and persistent voice rooms (MatrixRTC/MSC4143)
 - [ ] `MSC` Group video conferences (MatrixRTC/MSC4143)

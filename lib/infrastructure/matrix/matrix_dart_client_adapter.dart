@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart' show compute;
 import 'package:matrix/encryption.dart' as encryption;
-import 'package:matrix/matrix.dart' as matrix;
 import 'package:matrix/encryption/utils/crypto_setup_extension.dart';
+import 'package:matrix/matrix.dart' as matrix;
 import 'package:trace/core/matrix/matrix_client_port.dart';
+import 'package:trace/features/calls/application/call_service.dart';
+import 'package:trace/infrastructure/matrix/matrix_call_service.dart';
 import 'package:trace/infrastructure/matrix/matrix_crypto_bootstrap.dart';
 
 matrix.Client createMatrixDartClient({
@@ -35,10 +36,14 @@ final class MatrixDartClientAdapter
     implements
         MatrixClientPort,
         MatrixAccountManagementPort,
-        MatrixRecoveryPort {
+        MatrixRecoveryPort,
+        CallingClientPort {
   MatrixDartClientAdapter(this._client);
 
   final matrix.Client _client;
+  MatrixCallService? _calls;
+  @override
+  CallService get calls => _calls ??= MatrixCallService(_client);
   final StreamController<MatrixClientSnapshot> _snapshots =
       StreamController.broadcast();
   final StreamController<MatrixVerificationPort> _verificationRequests =
@@ -160,6 +165,8 @@ final class MatrixDartClientAdapter
 
   @override
   Future<void> logout() async {
+    _calls?.setAvailability(foreground: false, roomAllowed: (_) => false);
+    await _calls?.end();
     for (final timeline in _timelines.values.toList()) {
       await timeline.close();
     }
@@ -805,6 +812,7 @@ final class MatrixDartClientAdapter
 
   @override
   Future<void> close() async {
+    await _calls?.close();
     for (final timeline in _timelines.values.toList()) {
       await timeline.close();
     }

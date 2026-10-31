@@ -80,6 +80,9 @@ Password and browser SSO login, session restore, encrypted room history,
 pagination, text/file sending, invitations, room/user/cached-message search,
 room creation and joining, Saved Messages, basic message actions, typing,
 receipts, and encryption recovery are wired.
+[Audio messages](docs/messaging/AUDIO_MESSAGES.md) support recording, sending,
+and playback. [One-to-one voice calls](docs/messaging/CALLS.md) use Matrix VoIP
+while Trace is open; background ringing, video, and group calls remain open.
 Push notifications, polished media rendering, production signing/branding, QR
 verification, and encrypted-at-rest browser storage remain open.
 

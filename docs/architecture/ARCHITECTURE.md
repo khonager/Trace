@@ -48,8 +48,10 @@ cheap.
 ## Platform adapters
 
 Flutter invokes narrow adapters rather than importing native behavior into
-widgets. Calling requires native Android Telecom/CallStyle support and native
-iOS PushKit/CallKit support. `ClientCapabilities` expresses differences such as
+widgets. The initial calling implementation deliberately supports foreground
+one-to-one voice calls through WebRTC only. Background calling still requires
+native Android Telecom/CallStyle support and native iOS PushKit/CallKit support.
+See [foreground calls](../messaging/CALLS.md) for the current limits. `ClientCapabilities` expresses differences such as
 iOS background caller-audio limitations.
 
 ## Matrix SDK decision

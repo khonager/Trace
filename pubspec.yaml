@@ -31,6 +31,8 @@ dependencies:
   pasteboard: ^0.5.0
   record: ^6.2.0
   audioplayers: ^6.6.0
+  flutter_webrtc: 1.6.3
+  webrtc_interface: ^1.5.1
 
 dev_dependencies:
   flutter_test:
