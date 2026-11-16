@@ -4387,7 +4387,8 @@ class _MessageComposerState extends State<_MessageComposer>
         );
         _previewSource = source;
         player.onPlayerStateChanged.listen((state) {
-          if (mounted) setState(() => _previewPlaying = state == PlayerState.playing);
+          if (mounted)
+            setState(() => _previewPlaying = state == PlayerState.playing);
         });
         player.onPositionChanged.listen((pos) {
           if (mounted) setState(() => _previewPosition = pos);
@@ -4584,12 +4585,14 @@ class _MessageComposerState extends State<_MessageComposer>
             if (_recordingVoice)
               Container(
                 key: const Key('inline-voice-recording-bar'),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.5),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Row(
@@ -4636,12 +4639,14 @@ class _MessageComposerState extends State<_MessageComposer>
             else if (_previewingVoice)
               Container(
                 key: const Key('inline-voice-preview-bar'),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.5),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Row(
@@ -4649,7 +4654,9 @@ class _MessageComposerState extends State<_MessageComposer>
                     IconButton(
                       key: const Key('preview-play-voice-message'),
                       tooltip: _previewPlaying ? 'Pause' : 'Play',
-                      icon: Icon(_previewPlaying ? Icons.pause : Icons.play_arrow),
+                      icon: Icon(
+                        _previewPlaying ? Icons.pause : Icons.play_arrow,
+                      ),
                       onPressed: _voiceBusy ? null : _togglePreviewPlay,
                     ),
                     Text(
@@ -4743,7 +4750,8 @@ class _MessageComposerState extends State<_MessageComposer>
                                 buttonItems: [
                                   ...editable.contextMenuButtonItems.where(
                                     (item) =>
-                                        item.type != ContextMenuButtonType.paste,
+                                        item.type !=
+                                        ContextMenuButtonType.paste,
                                   ),
                                   ContextMenuButtonItem(
                                     type: ContextMenuButtonType.paste,
@@ -4774,7 +4782,9 @@ class _MessageComposerState extends State<_MessageComposer>
                           decoration: const InputDecoration(
                             hintText: 'Message',
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.all(Radius.circular(22)),
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(22),
+                              ),
                             ),
                             isDense: true,
                             contentPadding: EdgeInsets.symmetric(
@@ -4788,11 +4798,13 @@ class _MessageComposerState extends State<_MessageComposer>
                   ),
                   IconButton(
                     key: Key('send-message-${widget.conversationId}'),
-                    tooltip: widget.controller.text.trim().isNotEmpty ||
+                    tooltip:
+                        widget.controller.text.trim().isNotEmpty ||
                             pending.isNotEmpty
                         ? 'Send'
                         : 'Record voice message',
-                    onPressed: widget.controller.text.trim().isNotEmpty ||
+                    onPressed:
+                        widget.controller.text.trim().isNotEmpty ||
                             pending.isNotEmpty
                         ? _send
                         : _startVoiceRecording,
