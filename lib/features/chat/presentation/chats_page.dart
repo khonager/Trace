@@ -1,5 +1,8 @@
 import 'audio_message.dart';
 import 'voice_message_dialog.dart';
+import 'package:trace/features/chat/application/voice_recording.dart';
+import 'package:trace/features/chat/application/audio_source.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:trace/features/lock/lock_controller.dart';
 import 'package:trace/features/chat/application/reaction_shortcuts.dart';
 import 'package:trace/features/lock/lock_widgets.dart';
@@ -273,6 +276,44 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  Future<void> _sendVoiceMessage(Uint8List bytes) async {
+    if (_attachmentBusy || _conversations.isEmpty) return;
+    final roomId = _conversations[_activeConversation].id;
+    final client = widget.client;
+    if (client == null) {
+      setState(() {
+        _conversations[_activeConversation].messages.add(
+          _ChatMessage(
+            body: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
+            sentByMe: true,
+            kind: MatrixMessageKind.audio,
+            attachmentName: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
+            delivery: MatrixMessageDelivery.synced,
+            timestamp: DateTime.now(),
+          ),
+        );
+      });
+      return;
+    }
+    setState(() => _attachmentBusy = true);
+    try {
+      await client.sendFile(
+        roomId: roomId,
+        name: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
+        bytes: bytes,
+        mimeType: 'audio/wav',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not send voice message: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _attachmentBusy = false);
+    }
   }
 
   void _runComposerAction(ComposerAction action) {
@@ -766,6 +807,13 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
   }) async {
     final eventId = message.eventId;
     if (eventId == null || _conversations.isEmpty) {
+      if (widget.client == null && message.kind == MatrixMessageKind.audio) {
+        return MatrixAttachmentData(
+          bytes: pcmToWav(Uint8List(3200), sampleRate: 16000),
+          name: message.attachmentName ?? 'voice.wav',
+          mimeType: 'audio/wav',
+        );
+      }
       throw StateError('Attachment is not available.');
     }
     final roomId = _conversations[_activeConversation].id;
@@ -1574,6 +1622,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               activeIndex: _activeConversation,
               composerController: _composerController,
               onSend: _sendMessage,
+              onSendVoice: _sendVoiceMessage,
               onComposerAction: _runComposerAction,
               pinnedComposerActions: _pinnedComposerActions,
               onToggleComposerActionPinned: _toggleComposerActionPinned,
@@ -1750,6 +1799,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         activeIndex: _activeConversation,
                         composerController: _composerController,
                         onSend: _sendMessage,
+                        onSendVoice: _sendVoiceMessage,
                         onComposerAction: _runComposerAction,
                         pinnedComposerActions: _pinnedComposerActions,
                         onToggleComposerActionPinned:
@@ -2323,6 +2373,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
     required this.activeIndex,
     required this.composerController,
     required this.onSend,
+    this.onSendVoice,
+    this.voiceRecorder,
     required this.onComposerAction,
     required this.pinnedComposerActions,
     required this.onToggleComposerActionPinned,
@@ -2363,6 +2415,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
   final int activeIndex;
   final TextEditingController composerController;
   final VoidCallback onSend;
+  final Future<void> Function(Uint8List)? onSendVoice;
+  final VoiceRecorder? voiceRecorder;
   final ValueChanged<ComposerAction> onComposerAction;
   final List<ComposerAction> pinnedComposerActions;
   final ValueChanged<ComposerAction> onToggleComposerActionPinned;
@@ -2406,6 +2460,8 @@ class _FocusedChatWorkspace extends StatelessWidget {
         conversation: conversations[activeIndex],
         composerController: composerController,
         onSend: onSend,
+        onSendVoice: onSendVoice,
+        voiceRecorder: voiceRecorder,
         onComposerAction: onComposerAction,
         pinnedComposerActions: pinnedComposerActions,
         onToggleComposerActionPinned: onToggleComposerActionPinned,
@@ -2644,6 +2700,8 @@ class _ConversationView extends StatelessWidget {
     required this.conversation,
     required this.composerController,
     required this.onSend,
+    this.onSendVoice,
+    this.voiceRecorder,
     required this.onComposerAction,
     required this.pinnedComposerActions,
     required this.onToggleComposerActionPinned,
@@ -2683,6 +2741,8 @@ class _ConversationView extends StatelessWidget {
   final _Conversation conversation;
   final TextEditingController composerController;
   final VoidCallback onSend;
+  final Future<void> Function(Uint8List)? onSendVoice;
+  final VoiceRecorder? voiceRecorder;
   final ValueChanged<ComposerAction> onComposerAction;
   final List<ComposerAction> pinnedComposerActions;
   final ValueChanged<ComposerAction> onToggleComposerActionPinned;
@@ -3470,7 +3530,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
       MatrixMessageDelivery.sent => 'Sent',
       MatrixMessageDelivery.synced
           when widget.showTimestamp && widget.message.timestamp != null =>
-        _formatMessageTime(widget.message.timestamp!),
+        widget.message.sentByMe
+            ? '${_formatMessageTime(widget.message.timestamp!)} · Delivered'
+            : _formatMessageTime(widget.message.timestamp!),
+      MatrixMessageDelivery.synced when widget.message.sentByMe => 'Delivered',
       _ => null,
     };
     return Align(
@@ -3593,6 +3656,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         name:
                             widget.message.attachmentName ??
                             widget.message.body,
+                        foreground: widget.message.sentByMe
+                            ? Theme.of(context).colorScheme.surface
+                            : Theme.of(context).colorScheme.onSurface,
                       )
                     else if (widget.message.kind != MatrixMessageKind.text)
                       _FileAttachment(
@@ -4135,6 +4201,8 @@ class _MessageComposer extends StatefulWidget {
     required this.controller,
     required this.conversationId,
     required this.onSend,
+    this.onSendVoice,
+    this.voiceRecorder,
     required this.onComposerAction,
     required this.pinnedActions,
     required this.onTogglePinned,
@@ -4148,6 +4216,8 @@ class _MessageComposer extends StatefulWidget {
   final TextEditingController controller;
   final String conversationId;
   final VoidCallback onSend;
+  final Future<void> Function(Uint8List)? onSendVoice;
+  final VoiceRecorder? voiceRecorder;
   final ValueChanged<ComposerAction> onComposerAction;
   final List<ComposerAction> pinnedActions;
   final ValueChanged<ComposerAction> onTogglePinned;

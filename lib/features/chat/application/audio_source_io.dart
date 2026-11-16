@@ -15,7 +15,16 @@ class PrivateAudioSource {
     final root = await getTemporaryDirectory();
     final directory = await Directory('${root.path}/trace-audio-').createTemp();
     try {
-      final file = File('${directory.path}/audio');
+      final ext = mimeType.contains('wav')
+          ? 'wav'
+          : mimeType.contains('ogg')
+          ? 'ogg'
+          : mimeType.contains('mp3')
+          ? 'mp3'
+          : mimeType.contains('m4a') || mimeType.contains('mp4')
+          ? 'm4a'
+          : 'wav';
+      final file = File('${directory.path}/audio.$ext');
       await file.writeAsBytes(bytes, flush: true);
       return PrivateAudioSource._(
         DeviceFileSource(file.path, mimeType: mimeType),
