@@ -289,7 +289,8 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
             body: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
             sentByMe: true,
             kind: MatrixMessageKind.audio,
-            attachmentName: 'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
+            attachmentName:
+                'voice-${DateTime.now().millisecondsSinceEpoch}.wav',
             delivery: MatrixMessageDelivery.synced,
             timestamp: DateTime.now(),
           ),

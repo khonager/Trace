@@ -156,13 +156,14 @@ class _AudioMessageState extends State<AudioMessage>
     final maxMs = duration.inMilliseconds > 0
         ? duration.inMilliseconds.toDouble()
         : (_position.inMilliseconds > 0
-            ? _position.inMilliseconds.toDouble()
-            : 1.0);
+              ? _position.inMilliseconds.toDouble()
+              : 1.0);
     final currentMs = _position.inMilliseconds
         .clamp(0, maxMs.round())
         .toDouble();
 
-    final timeLabel = _formatDuration(_position) +
+    final timeLabel =
+        _formatDuration(_position) +
         (duration > Duration.zero ? ' / ${_formatDuration(duration)}' : '');
 
     return SizedBox(
