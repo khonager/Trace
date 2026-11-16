@@ -53,6 +53,7 @@ class ChatsPage extends StatefulWidget {
     this.mediaSearch,
     this.mediaFavoriteStore,
     this.composerActionPinStore,
+    this.voiceRecorder,
   });
 
   final MatrixClientPort? client;
@@ -65,6 +66,7 @@ class ChatsPage extends StatefulWidget {
   final MediaSearchPort? mediaSearch;
   final MediaFavoriteStore? mediaFavoriteStore;
   final ComposerActionPinStore? composerActionPinStore;
+  final VoiceRecorder? voiceRecorder;
 
   @override
   State<ChatsPage> createState() => _ChatsPageState();
@@ -1624,6 +1626,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
               composerController: _composerController,
               onSend: _sendMessage,
               onSendVoice: _sendVoiceMessage,
+              voiceRecorder: widget.voiceRecorder,
               onComposerAction: _runComposerAction,
               pinnedComposerActions: _pinnedComposerActions,
               onToggleComposerActionPinned: _toggleComposerActionPinned,
@@ -1801,6 +1804,7 @@ class _ChatsPageState extends State<ChatsPage> with TickerProviderStateMixin {
                         composerController: _composerController,
                         onSend: _sendMessage,
                         onSendVoice: _sendVoiceMessage,
+                        voiceRecorder: widget.voiceRecorder,
                         onComposerAction: _runComposerAction,
                         pinnedComposerActions: _pinnedComposerActions,
                         onToggleComposerActionPinned:
@@ -3047,6 +3051,8 @@ class _ConversationView extends StatelessWidget {
             controller: composerController,
             conversationId: conversation.id,
             onSend: onSend,
+            onSendVoice: onSendVoice,
+            voiceRecorder: voiceRecorder,
             onComposerAction: onComposerAction,
             pinnedActions: pinnedComposerActions,
             onTogglePinned: onToggleComposerActionPinned,
@@ -4232,13 +4238,220 @@ class _MessageComposer extends StatefulWidget {
   State<_MessageComposer> createState() => _MessageComposerState();
 }
 
-class _MessageComposerState extends State<_MessageComposer> {
+class _MessageComposerState extends State<_MessageComposer>
+    with WidgetsBindingObserver {
   final FocusNode _focusNode = FocusNode();
+  VoiceRecorder? _activeRecorder;
+  AudioPlayer? _previewPlayer;
+  PrivateAudioSource? _previewSource;
+  bool _recordingVoice = false;
+  bool _previewingVoice = false;
+  bool _previewPlaying = false;
+  Duration _previewPosition = Duration.zero;
+  int _recordSeconds = 0;
+  Timer? _recordTimer;
+  Uint8List? _recordedBytes;
+  bool _voiceBusy = false;
+
+  VoiceRecorder get _recorder =>
+      widget.voiceRecorder ?? (_activeRecorder ??= VoiceRecording());
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if ((state != AppLifecycleState.resumed && _recordingVoice) ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      if (_recordingVoice || _previewingVoice) {
+        unawaited(_discardVoiceRecording());
+      }
+    }
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _recordTimer?.cancel();
+    unawaited(_previewPlayer?.dispose());
+    unawaited(_previewSource?.dispose());
+    unawaited(_activeRecorder?.dispose());
     _focusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _startVoiceRecording() async {
+    if (_voiceBusy || widget.attachmentBusy) return;
+    setState(() {
+      _recordingVoice = true;
+      _previewingVoice = false;
+      _recordedBytes = null;
+      _recordSeconds = 0;
+      _voiceBusy = true;
+    });
+    try {
+      await _recorder.start();
+      if (!mounted) return;
+      setState(() => _voiceBusy = false);
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() => _recordSeconds++);
+        if (_recordSeconds >= 300) {
+          unawaited(_stopVoiceRecording());
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _recordingVoice = false;
+          _voiceBusy = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not record voice message: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopVoiceRecording() async {
+    _recordTimer?.cancel();
+    setState(() => _voiceBusy = true);
+    try {
+      final bytes = await _recorder.stop();
+      if (!mounted) return;
+      setState(() {
+        _recordingVoice = false;
+        _previewingVoice = true;
+        _recordedBytes = bytes;
+        _previewPosition = Duration.zero;
+        _previewPlaying = false;
+        _voiceBusy = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _recordingVoice = false;
+          _previewingVoice = false;
+          _voiceBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _discardVoiceRecording() async {
+    _recordTimer?.cancel();
+    unawaited(_previewPlayer?.stop());
+    unawaited(_previewPlayer?.dispose());
+    _previewPlayer = null;
+    unawaited(_previewSource?.dispose());
+    _previewSource = null;
+    unawaited(_activeRecorder?.dispose());
+    _activeRecorder = null;
+    if (mounted) {
+      setState(() {
+        _recordingVoice = false;
+        _previewingVoice = false;
+        _recordedBytes = null;
+        _recordSeconds = 0;
+        _previewPlaying = false;
+        _previewPosition = Duration.zero;
+        _voiceBusy = false;
+      });
+    }
+  }
+
+  Future<void> _togglePreviewPlay() async {
+    if (_recordedBytes == null || _voiceBusy) return;
+    try {
+      final player = _previewPlayer ??= AudioPlayer();
+      if (_previewPlaying) {
+        await player.pause();
+      } else if (_previewSource != null) {
+        if (_previewPosition.inSeconds >= _recordSeconds) {
+          await player.seek(Duration.zero);
+          _previewPosition = Duration.zero;
+        }
+        await player.resume();
+      } else {
+        final source = await PrivateAudioSource.create(
+          _recordedBytes!,
+          'audio/wav',
+        );
+        _previewSource = source;
+        player.onPlayerStateChanged.listen((state) {
+          if (mounted) setState(() => _previewPlaying = state == PlayerState.playing);
+        });
+        player.onPositionChanged.listen((pos) {
+          if (mounted) setState(() => _previewPosition = pos);
+        });
+        player.onPlayerComplete.listen((_) {
+          if (mounted) {
+            setState(() {
+              _previewPlaying = false;
+              _previewPosition = Duration.zero;
+            });
+          }
+        });
+        await player.play(source.source);
+      }
+    } catch (_) {
+      // preview playback gracefully handled
+    }
+  }
+
+  Future<void> _sendVoiceRecording() async {
+    if (_voiceBusy) return;
+    Uint8List? bytes = _recordedBytes;
+    if (_recordingVoice && bytes == null) {
+      _recordTimer?.cancel();
+      setState(() => _voiceBusy = true);
+      try {
+        bytes = await _recorder.stop();
+      } catch (e) {
+        if (mounted) setState(() => _voiceBusy = false);
+        return;
+      }
+    }
+    if (bytes == null || bytes.isEmpty) return;
+    setState(() => _voiceBusy = true);
+    try {
+      unawaited(_previewPlayer?.stop());
+      unawaited(_previewPlayer?.dispose());
+      _previewPlayer = null;
+      unawaited(_previewSource?.dispose());
+      _previewSource = null;
+      await widget.onSendVoice?.call(bytes);
+    } finally {
+      unawaited(_activeRecorder?.dispose());
+      _activeRecorder = null;
+      if (mounted) {
+        setState(() {
+          _recordingVoice = false;
+          _previewingVoice = false;
+          _recordedBytes = null;
+          _recordSeconds = 0;
+          _previewPlaying = false;
+          _previewPosition = Duration.zero;
+          _voiceBusy = false;
+        });
+      }
+    }
+  }
+
+  void _runComposerAction(ComposerAction action) {
+    if (action == ComposerAction.voiceMessage) {
+      unawaited(_startVoiceRecording());
+      return;
+    }
+    widget.onComposerAction(action);
   }
 
   Future<void> _paste() async {
@@ -4355,7 +4568,7 @@ class _MessageComposerState extends State<_MessageComposer> {
                           key: Key('pinned-composer-action-${action.name}'),
                           onPressed: widget.attachmentBusy
                               ? null
-                              : () => widget.onComposerAction(action),
+                              : () => _runComposerAction(action),
                           icon: Icon(_composerActionIcon(action), size: 17),
                           label: Text(_composerActionShortLabel(action)),
                           style: OutlinedButton.styleFrom(
@@ -4368,127 +4581,230 @@ class _MessageComposerState extends State<_MessageComposer> {
                   },
                 ),
               ),
-            Row(
-              children: [
-                PopupMenuButton<ComposerAction>(
-                  key: const Key('composer-action-menu'),
-                  tooltip: 'Add',
-                  enabled: !widget.attachmentBusy,
-                  onSelected: widget.onComposerAction,
-                  itemBuilder: (context) => ComposerAction.values
-                      .map(
-                        (action) => PopupMenuItem<ComposerAction>(
-                          key: Key('composer-action-menu-${action.name}'),
-                          value: action,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onLongPress: () {
-                              Navigator.pop(context);
-                              widget.onTogglePinned(action);
-                            },
-                            child: SizedBox(
-                              width: double.infinity,
-                              child: Row(
-                                children: [
-                                  Icon(_composerActionIcon(action), size: 20),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(_composerActionLabel(action)),
-                                  ),
-                                  if (widget.pinnedActions.contains(action))
-                                    const Icon(Icons.push_pin, size: 16),
-                                ],
+            if (_recordingVoice)
+              Container(
+                key: const Key('inline-voice-recording-bar'),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.fiber_manual_record,
+                      color: Colors.red,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${_recordSeconds ~/ 60}:${(_recordSeconds % 60).toString().padLeft(2, '0')}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'Recording voice message…',
+                        style: TextStyle(fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('discard-voice-recording'),
+                      tooltip: 'Discard',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: _voiceBusy ? null : _discardVoiceRecording,
+                    ),
+                    IconButton(
+                      key: const Key('stop-voice-recording'),
+                      tooltip: 'Stop and review',
+                      icon: const Icon(Icons.stop_circle_outlined),
+                      onPressed: _voiceBusy ? null : _stopVoiceRecording,
+                    ),
+                    IconButton(
+                      key: const Key('send-voice-recording'),
+                      tooltip: 'Send voice message',
+                      icon: const Icon(Icons.arrow_upward),
+                      onPressed: _voiceBusy ? null : _sendVoiceRecording,
+                    ),
+                  ],
+                ),
+              )
+            else if (_previewingVoice)
+              Container(
+                key: const Key('inline-voice-preview-bar'),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      key: const Key('preview-play-voice-message'),
+                      tooltip: _previewPlaying ? 'Pause' : 'Play',
+                      icon: Icon(_previewPlaying ? Icons.pause : Icons.play_arrow),
+                      onPressed: _voiceBusy ? null : _togglePreviewPlay,
+                    ),
+                    Text(
+                      '${_previewPosition.inSeconds}s / ${_recordSeconds}s',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      key: const Key('discard-voice-preview'),
+                      tooltip: 'Discard',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: _voiceBusy ? null : _discardVoiceRecording,
+                    ),
+                    IconButton(
+                      key: const Key('send-voice-preview'),
+                      tooltip: 'Send voice message',
+                      icon: const Icon(Icons.arrow_upward),
+                      onPressed: _voiceBusy ? null : _sendVoiceRecording,
+                    ),
+                  ],
+                ),
+              )
+            else
+              Row(
+                children: [
+                  PopupMenuButton<ComposerAction>(
+                    key: const Key('composer-action-menu'),
+                    tooltip: 'Add',
+                    enabled: !widget.attachmentBusy,
+                    onSelected: _runComposerAction,
+                    itemBuilder: (context) => ComposerAction.values
+                        .map(
+                          (action) => PopupMenuItem<ComposerAction>(
+                            key: Key('composer-action-menu-${action.name}'),
+                            value: action,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onLongPress: () {
+                                Navigator.pop(context);
+                                widget.onTogglePinned(action);
+                              },
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: Row(
+                                  children: [
+                                    Icon(_composerActionIcon(action), size: 20),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(_composerActionLabel(action)),
+                                    ),
+                                    if (widget.pinnedActions.contains(action))
+                                      const Icon(Icons.push_pin, size: 16),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      )
-                      .toList(growable: false),
-                  icon: widget.attachmentBusy
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.add_circle_outline),
-                ),
-                Expanded(
-                  child: Shortcuts(
-                    shortcuts: const {
-                      SingleActivator(LogicalKeyboardKey.keyV, control: true):
-                          _PasteAttachmentIntent(),
-                      SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-                          _PasteAttachmentIntent(),
-                      SingleActivator(LogicalKeyboardKey.insert, shift: true):
-                          _PasteAttachmentIntent(),
-                    },
-                    child: Actions(
-                      actions: {
-                        _PasteAttachmentIntent:
-                            CallbackAction<_PasteAttachmentIntent>(
-                              onInvoke: (_) {
-                                unawaited(_paste());
-                                return null;
-                              },
-                            ),
+                        .toList(growable: false),
+                    icon: widget.attachmentBusy
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_circle_outline),
+                  ),
+                  Expanded(
+                    child: Shortcuts(
+                      shortcuts: const {
+                        SingleActivator(LogicalKeyboardKey.keyV, control: true):
+                            _PasteAttachmentIntent(),
+                        SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+                            _PasteAttachmentIntent(),
+                        SingleActivator(LogicalKeyboardKey.insert, shift: true):
+                            _PasteAttachmentIntent(),
                       },
-                      child: TextField(
-                        contextMenuBuilder: (context, editable) =>
-                            AdaptiveTextSelectionToolbar.buttonItems(
-                              anchors: editable.contextMenuAnchors,
-                              buttonItems: [
-                                ...editable.contextMenuButtonItems.where(
-                                  (item) =>
-                                      item.type != ContextMenuButtonType.paste,
-                                ),
-                                ContextMenuButtonItem(
-                                  type: ContextMenuButtonType.paste,
-                                  onPressed: () {
-                                    editable.hideToolbar();
-                                    unawaited(_paste());
-                                  },
-                                ),
-                              ],
+                      child: Actions(
+                        actions: {
+                          _PasteAttachmentIntent:
+                              CallbackAction<_PasteAttachmentIntent>(
+                                onInvoke: (_) {
+                                  unawaited(_paste());
+                                  return null;
+                                },
+                              ),
+                        },
+                        child: TextField(
+                          contextMenuBuilder: (context, editable) =>
+                              AdaptiveTextSelectionToolbar.buttonItems(
+                                anchors: editable.contextMenuAnchors,
+                                buttonItems: [
+                                  ...editable.contextMenuButtonItems.where(
+                                    (item) =>
+                                        item.type != ContextMenuButtonType.paste,
+                                  ),
+                                  ContextMenuButtonItem(
+                                    type: ContextMenuButtonType.paste,
+                                    onPressed: () {
+                                      editable.hideToolbar();
+                                      unawaited(_paste());
+                                    },
+                                  ),
+                                ],
+                              ),
+                          key: Key('message-composer-${widget.conversationId}'),
+                          controller: widget.controller,
+                          focusNode: _focusNode,
+                          onChanged: widget.onChanged,
+                          contentInsertionConfiguration:
+                              ContentInsertionConfiguration(
+                                allowedMimeTypes: const [
+                                  'image/gif',
+                                  'image/png',
+                                  'image/jpeg',
+                                  'image/webp',
+                                ],
+                                onContentInserted: widget.onKeyboardContent,
+                              ),
+                          textInputAction: TextInputAction.send,
+                          onEditingComplete: () {},
+                          onSubmitted: (_) => _send(),
+                          decoration: const InputDecoration(
+                            hintText: 'Message',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.all(Radius.circular(22)),
                             ),
-                        key: Key('message-composer-${widget.conversationId}'),
-                        controller: widget.controller,
-                        focusNode: _focusNode,
-                        onChanged: widget.onChanged,
-                        contentInsertionConfiguration:
-                            ContentInsertionConfiguration(
-                              allowedMimeTypes: const [
-                                'image/gif',
-                                'image/png',
-                                'image/jpeg',
-                                'image/webp',
-                              ],
-                              onContentInserted: widget.onKeyboardContent,
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 11,
                             ),
-                        textInputAction: TextInputAction.send,
-                        onEditingComplete: () {},
-                        onSubmitted: (_) => _send(),
-                        decoration: const InputDecoration(
-                          hintText: 'Message',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(22)),
-                          ),
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 11,
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                IconButton(
-                  key: Key('send-message-${widget.conversationId}'),
-                  tooltip: 'Send',
-                  onPressed: _send,
-                  icon: const Icon(Icons.arrow_upward),
-                ),
-              ],
-            ),
+                  IconButton(
+                    key: Key('send-message-${widget.conversationId}'),
+                    tooltip: widget.controller.text.trim().isNotEmpty ||
+                            pending.isNotEmpty
+                        ? 'Send'
+                        : 'Record voice message',
+                    onPressed: widget.controller.text.trim().isNotEmpty ||
+                            pending.isNotEmpty
+                        ? _send
+                        : _startVoiceRecording,
+                    icon: Icon(
+                      widget.controller.text.trim().isNotEmpty ||
+                              pending.isNotEmpty
+                          ? Icons.arrow_upward
+                          : Icons.mic_outlined,
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
