@@ -7,6 +7,51 @@ import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
+  testWidgets('reading position survives incoming messages', (tester) async {
+    final timeline = _DecryptingTimeline();
+    MatrixMessage message(int index) => MatrixMessage(
+      eventId: 'scroll-$index',
+      senderId: '@alice:example.org',
+      senderName: 'Alice',
+      body: 'Scroll message $index',
+      timestamp: DateTime.utc(2026, 8, 31, 12),
+      sentByMe: false,
+      delivery: MatrixMessageDelivery.synced,
+    );
+    timeline._current = List.generate(80, message);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
+        home: Scaffold(body: ChatsPage(client: _RefreshClient(timeline))),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('conversation-row-0')));
+    await tester.pumpAndSettle();
+    final list = find.byWidgetPredicate(
+      (widget) => widget is CustomScrollView && widget.reverse,
+    );
+    await tester.drag(list, const Offset(0, 700));
+    await tester.pumpAndSettle();
+    final visible =
+        find
+                .textContaining('Scroll message')
+                .evaluate()
+                .where((element) {
+                  final y = tester.getCenter(find.byWidget(element.widget)).dy;
+                  return y > 150 && y < 450;
+                })
+                .first
+                .widget
+            as Text;
+    final anchor = find.text(visible.data ?? visible.textSpan!.toPlainText());
+    final before = tester.getTopLeft(anchor).dy;
+    timeline._current = [message(100), ...timeline._current];
+    timeline._updates.add(timeline._current);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(anchor).dy, closeTo(before, 1));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'individual message recovery replaces the persistent chat banner',
     (tester) async {

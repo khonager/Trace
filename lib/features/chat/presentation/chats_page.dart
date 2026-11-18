@@ -1,4 +1,5 @@
 import 'audio_message.dart';
+import 'message_list.dart';
 import 'voice_message_dialog.dart';
 import 'package:trace/features/chat/application/voice_recording.dart';
 import 'package:trace/features/chat/application/audio_source.dart';
@@ -2977,72 +2978,60 @@ class _ConversationView extends StatelessWidget {
                       cachedMediaThumbnail: cachedMediaThumbnail,
                     ),
                   ),
-                NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    final metrics = notification.metrics;
-                    if (metrics.pixels >= metrics.maxScrollExtent - 120) {
-                      unawaited(onLoadOlder());
-                    }
-                    return false;
+                MessageList(
+                  key: ValueKey('messages-${conversation.id}'),
+                  onLoadOlder: onLoadOlder,
+                  messageIds: [
+                    for (final message in conversation.messages.reversed)
+                      message.eventId ?? message,
+                  ],
+                  typingIndicator: conversation.typingLabel == null
+                      ? null
+                      : TypingBubble(label: conversation.typingLabel!),
+                  itemBuilder: (context, reverseIndex) {
+                    final index =
+                        conversation.messages.length - reverseIndex - 1;
+                    final message = conversation.messages[index];
+                    final replyToEventId = message.replyToEventId;
+                    final previousTimestamp = index == 0
+                        ? null
+                        : conversation.messages[index - 1].timestamp;
+                    final showDate =
+                        message.timestamp != null &&
+                        (previousTimestamp == null ||
+                            !_isSameLocalDay(
+                              previousTimestamp,
+                              message.timestamp!,
+                            ));
+                    return Column(
+                      key: ValueKey(message.eventId ?? message),
+                      children: [
+                        if (showDate)
+                          _MessageDateSeparator(timestamp: message.timestamp!),
+                        _MessageBubble(
+                          key: message.eventId == null
+                              ? null
+                              : messageKeyFor(message.eventId!),
+                          message: message,
+                          showTimestamp: _isToday(message.timestamp),
+                          showSenderIdentity: !conversation.isDirect,
+                          onLongPress: () => onMessageLongPress(message),
+                          onTap: () => onMessageTap(message),
+                          onDoubleTap: () => onMessageDoubleTap(message),
+                          onLoadAttachment: () =>
+                              onLoadAttachment(message, thumbnail: true),
+                          onLoadMediaThumbnail: onLoadMediaThumbnail,
+                          onOpenProfilePicture: onOpenProfilePicture,
+                          onSaveAttachment: () => onSaveAttachment(message),
+                          onOpenImage: () => onOpenImage(message),
+                          onOpenLink: onOpenLink,
+                          onOpenReply: replyToEventId != null
+                              ? () => onOpenReply(replyToEventId)
+                              : null,
+                        ),
+                      ],
+                    );
                   },
-                  child: ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-                    itemCount:
-                        conversation.messages.length +
-                        (conversation.typingLabel == null ? 0 : 1),
-                    itemBuilder: (context, reverseIndex) {
-                      if (conversation.typingLabel != null) {
-                        if (reverseIndex == 0) {
-                          return TypingBubble(label: conversation.typingLabel!);
-                        }
-                        reverseIndex--;
-                      }
-                      final index =
-                          conversation.messages.length - reverseIndex - 1;
-                      final message = conversation.messages[index];
-                      final replyToEventId = message.replyToEventId;
-                      final previousTimestamp = index == 0
-                          ? null
-                          : conversation.messages[index - 1].timestamp;
-                      final showDate =
-                          message.timestamp != null &&
-                          (previousTimestamp == null ||
-                              !_isSameLocalDay(
-                                previousTimestamp,
-                                message.timestamp!,
-                              ));
-                      return Column(
-                        children: [
-                          if (showDate)
-                            _MessageDateSeparator(
-                              timestamp: message.timestamp!,
-                            ),
-                          _MessageBubble(
-                            key: message.eventId == null
-                                ? null
-                                : messageKeyFor(message.eventId!),
-                            message: message,
-                            showTimestamp: _isToday(message.timestamp),
-                            showSenderIdentity: !conversation.isDirect,
-                            onLongPress: () => onMessageLongPress(message),
-                            onTap: () => onMessageTap(message),
-                            onDoubleTap: () => onMessageDoubleTap(message),
-                            onLoadAttachment: () =>
-                                onLoadAttachment(message, thumbnail: true),
-                            onLoadMediaThumbnail: onLoadMediaThumbnail,
-                            onOpenProfilePicture: onOpenProfilePicture,
-                            onSaveAttachment: () => onSaveAttachment(message),
-                            onOpenImage: () => onOpenImage(message),
-                            onOpenLink: onOpenLink,
-                            onOpenReply: replyToEventId != null
-                                ? () => onOpenReply(replyToEventId)
-                                : null,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
                 ),
               ],
             ),
