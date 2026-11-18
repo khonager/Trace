@@ -4062,38 +4062,39 @@ class _ImageAttachment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<MatrixAttachmentData>(
-      future: data,
-      builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          final rawAspectRatio =
-              width != null && height != null && width! > 0 && height! > 0
-              ? width! / height!
-              : 4 / 3;
-          final aspectRatio = rawAspectRatio.clamp(.2, 5.0);
-          final stickerSize =
-              AppearanceScope.maybeOf(context)?.stickerSize ?? 144;
-          var previewWidth = isSticker ? stickerSize : 272.0;
-          var previewHeight = previewWidth / aspectRatio;
-          final maxHeight = isSticker ? stickerSize : 300.0;
-          if (previewHeight > maxHeight) {
-            previewHeight = maxHeight;
-            previewWidth = previewHeight * aspectRatio;
-          } else if (!isSticker && previewHeight < 96) {
-            previewHeight = 96;
-          }
-          return Semantics(
-            button: true,
-            label: 'Open $name',
-            child: InkWell(
-              onTap: onOpen,
-              borderRadius: BorderRadius.circular(10),
-              child: ClipRRect(
+    final rawAspectRatio =
+        width != null && height != null && width! > 0 && height! > 0
+        ? width! / height!
+        : 4 / 3;
+    final aspectRatio = rawAspectRatio.clamp(.2, 5.0);
+    final stickerSize = AppearanceScope.maybeOf(context)?.stickerSize ?? 144;
+    var previewWidth = isSticker ? stickerSize : 272.0;
+    var previewHeight = previewWidth / aspectRatio;
+    final maxHeight = isSticker ? stickerSize : 300.0;
+    if (previewHeight > maxHeight) {
+      previewHeight = maxHeight;
+      previewWidth = previewHeight * aspectRatio;
+    } else if (!isSticker && previewHeight < 96) {
+      previewHeight = 96;
+    }
+    // Reserve the same space for loading, failure, and success. Resizing an
+    // existing attachment would move older messages while they are being read.
+    return SizedBox(
+      key: Key('message-image-frame-$name'),
+      width: previewWidth,
+      height: previewHeight,
+      child: FutureBuilder<MatrixAttachmentData>(
+        future: data,
+        builder: (context, snapshot) {
+          if (snapshot.hasData) {
+            return Semantics(
+              button: true,
+              label: 'Open $name',
+              child: InkWell(
+                onTap: onOpen,
                 borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  key: Key('message-image-frame-$name'),
-                  width: previewWidth,
-                  height: previewHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
                   child: Image.memory(
                     snapshot.data!.bytes,
                     key: Key('message-image-$name'),
@@ -4107,22 +4108,14 @@ class _ImageAttachment extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
-          );
-        }
-        if (snapshot.hasError) {
-          return _AttachmentError(foreground: foreground, onRetry: onRetry);
-        }
-        return SizedBox(
-          width: isSticker
-              ? AppearanceScope.maybeOf(context)?.stickerSize ?? 144
-              : 272,
-          height: isSticker
-              ? AppearanceScope.maybeOf(context)?.stickerSize ?? 144
-              : 160,
-          child: const Center(child: CircularProgressIndicator()),
-        );
-      },
+            );
+          }
+          if (snapshot.hasError) {
+            return _AttachmentError(foreground: foreground, onRetry: onRetry);
+          }
+          return const Center(child: CircularProgressIndicator());
+        },
+      ),
     );
   }
 }

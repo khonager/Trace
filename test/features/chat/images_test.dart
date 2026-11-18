@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,66 @@ import 'package:trace/core/matrix/matrix_client_port.dart';
 import 'package:trace/features/chat/presentation/chats_page.dart';
 
 void main() {
+  for (final fails in [false, true]) {
+    testWidgets(
+      'image ${fails ? 'failure' : 'loading'} preserves the reading position',
+      (tester) async {
+        final completion = Completer<MatrixAttachmentData>();
+        final timeline = _ImageTimeline(pending: completion.future);
+        timeline.messages = List.generate(
+          30,
+          (index) => index == 8
+              ? _imageMessage
+              : MatrixMessage(
+                  eventId: 'text-$index',
+                  senderId: '@alice:example.org',
+                  senderName: 'Alice',
+                  body: 'Older message $index',
+                  timestamp: DateTime.utc(2026, 8, 31, 12),
+                  sentByMe: false,
+                  delivery: MatrixMessageDelivery.synced,
+                ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(splashFactory: InkRipple.splashFactory),
+            home: Scaffold(body: ChatsPage(client: _ImageClient(timeline))),
+          ),
+        );
+        await tester.tap(find.byKey(const Key('conversation-row-0')));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        final list = tester.widget<CustomScrollView>(
+          find.byType(CustomScrollView),
+        );
+        list.controller!.jumpTo(350);
+        await tester.pump();
+        final anchor = find.text('Older message 12');
+        final before = tester.getTopLeft(anchor);
+        final imageSurface = find.byKey(
+          const Key('message-surface-image-event'),
+        );
+        final sizeBefore = tester.getSize(imageSurface);
+        if (fails) {
+          completion.completeError(StateError('Image unavailable'));
+        } else {
+          completion.complete(
+            MatrixAttachmentData(
+              bytes: base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+              name: 'photo.png',
+              mimeType: 'image/png',
+            ),
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(anchor), before);
+        expect(tester.getSize(imageSurface), sizeBefore);
+      },
+    );
+  }
+
   testWidgets('opens and downloads the original received image', (
     tester,
   ) async {
@@ -170,10 +231,14 @@ final class _PendingImageTimeline implements MatrixTimelinePort {
 }
 
 final class _ImageTimeline implements MatrixTimelinePort {
+  _ImageTimeline({this.pending});
+
+  final Future<MatrixAttachmentData>? pending;
+  List<MatrixMessage> messages = [_imageMessage];
   final List<bool> thumbnailRequests = [];
 
   @override
-  List<MatrixMessage> get current => [_imageMessage];
+  List<MatrixMessage> get current => messages;
 
   @override
   Stream<List<MatrixMessage>> get updates => const Stream.empty();
@@ -187,6 +252,7 @@ final class _ImageTimeline implements MatrixTimelinePort {
     bool thumbnail = false,
   }) async {
     thumbnailRequests.add(thumbnail);
+    if (pending != null) return pending!;
     return MatrixAttachmentData(
       bytes: base64Decode(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
