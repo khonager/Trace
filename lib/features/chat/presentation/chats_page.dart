@@ -4370,6 +4370,7 @@ class _MessageComposerState extends State<_MessageComposer>
 
   Future<void> _togglePreviewPlay() async {
     if (_recordedBytes == null || _voiceBusy) return;
+    setState(() => _voiceBusy = true);
     try {
       final player = _previewPlayer ??= AudioPlayer();
       if (_previewPlaying) {
@@ -4385,10 +4386,15 @@ class _MessageComposerState extends State<_MessageComposer>
           _recordedBytes!,
           'audio/wav',
         );
+        if (!mounted || !_previewingVoice) {
+          await source.dispose();
+          return;
+        }
         _previewSource = source;
         player.onPlayerStateChanged.listen((state) {
-          if (mounted)
+          if (mounted) {
             setState(() => _previewPlaying = state == PlayerState.playing);
+          }
         });
         player.onPositionChanged.listen((pos) {
           if (mounted) setState(() => _previewPosition = pos);
@@ -4401,10 +4407,21 @@ class _MessageComposerState extends State<_MessageComposer>
             });
           }
         });
+        await player.setReleaseMode(ReleaseMode.stop);
         await player.play(source.source);
       }
     } catch (_) {
-      // preview playback gracefully handled
+      await _previewPlayer?.dispose();
+      _previewPlayer = null;
+      await _previewSource?.dispose();
+      _previewSource = null;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not play audio. Tap to retry.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _voiceBusy = false);
     }
   }
 
@@ -4796,24 +4813,27 @@ class _MessageComposerState extends State<_MessageComposer>
                       ),
                     ),
                   ),
-                  IconButton(
-                    key: Key('send-message-${widget.conversationId}'),
-                    tooltip:
-                        widget.controller.text.trim().isNotEmpty ||
-                            pending.isNotEmpty
-                        ? 'Send'
-                        : 'Record voice message',
-                    onPressed:
-                        widget.controller.text.trim().isNotEmpty ||
-                            pending.isNotEmpty
-                        ? _send
-                        : _startVoiceRecording,
-                    icon: Icon(
-                      widget.controller.text.trim().isNotEmpty ||
-                              pending.isNotEmpty
-                          ? Icons.arrow_upward
-                          : Icons.mic_outlined,
-                    ),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: widget.controller,
+                    builder: (context, value, child) {
+                      final canSend =
+                          value.text.trim().isNotEmpty || pending.isNotEmpty;
+                      return IconButton(
+                        key: Key('send-message-${widget.conversationId}'),
+                        tooltip: canSend ? 'Send' : 'Record voice message',
+                        onPressed: () {
+                          if (widget.controller.text.trim().isNotEmpty ||
+                              store.forRoom(widget.conversationId).isNotEmpty) {
+                            _send();
+                          } else {
+                            unawaited(_startVoiceRecording());
+                          }
+                        },
+                        icon: Icon(
+                          canSend ? Icons.arrow_upward : Icons.mic_outlined,
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),

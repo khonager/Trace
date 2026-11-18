@@ -96,6 +96,8 @@ class _AudioMessageState extends State<AudioMessage>
         }
         await _source?.dispose();
         _source = source;
+        // Retain the source so a completed message can be replayed.
+        await player.setReleaseMode(ReleaseMode.stop);
         await player.play(source.source);
         if (generation != _generation) await player.pause();
       }

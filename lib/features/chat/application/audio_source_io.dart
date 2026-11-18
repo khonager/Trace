@@ -13,13 +13,13 @@ class PrivateAudioSource {
     String mimeType,
   ) async {
     final root = await getTemporaryDirectory();
-    final directory = await Directory('${root.path}/trace-audio-').createTemp();
+    final directory = await root.createTemp('trace-audio-');
     try {
       final ext = mimeType.contains('wav')
           ? 'wav'
           : mimeType.contains('ogg')
           ? 'ogg'
-          : mimeType.contains('mp3')
+          : mimeType.contains('mp3') || mimeType.contains('mpeg')
           ? 'mp3'
           : mimeType.contains('m4a') || mimeType.contains('mp4')
           ? 'm4a'
