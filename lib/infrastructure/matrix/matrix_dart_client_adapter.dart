@@ -53,6 +53,7 @@ final class MatrixDartClientAdapter
   final Map<String, _MatrixDartTimeline> _timelines = {};
   final Map<String, Future<Uint8List>> _mediaDownloads = {};
   final Set<_MatrixDartVerification> _verifications = {};
+  final Map<String, Future<MatrixVerificationPort>> _verificationStarts = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   MatrixClientSnapshot _current = const MatrixClientSnapshot.starting();
   MatrixConnectionPhase _connectionPhase = MatrixConnectionPhase.starting;
@@ -604,11 +605,29 @@ final class MatrixDartClientAdapter
   }
 
   @override
-  Future<MatrixVerificationPort> startDeviceVerification(
+  Future<MatrixVerificationPort> startDeviceVerification(String deviceId) =>
+      _verificationStarts.putIfAbsent(deviceId, () async {
+        try {
+          return await _startDeviceVerification(deviceId);
+        } finally {
+          _verificationStarts.remove(deviceId);
+        }
+      });
+
+  Future<MatrixVerificationPort> _startDeviceVerification(
     String deviceId,
   ) async {
     final userId = _client.userID;
     if (userId == null) throw Exception('Sign in before verifying a device.');
+    // A second transaction can cause the peer to cancel its open request.
+    // Resume the existing exchange, including requests initiated by other apps.
+    for (final verification in _verifications) {
+      if (!verification._request.isDone &&
+          verification._request.userId == userId &&
+          verification._request.deviceId == deviceId) {
+        return verification;
+      }
+    }
     var key = _client.userDeviceKeys[userId]?.deviceKeys[deviceId];
     if (key == null) {
       await _client.updateUserDeviceKeys(additionalUsers: {userId});
@@ -623,6 +642,9 @@ final class MatrixDartClientAdapter
   _MatrixDartVerification _wrapVerification(
     encryption.KeyVerification request,
   ) {
+    for (final verification in _verifications) {
+      if (identical(verification._request, request)) return verification;
+    }
     final verification = _MatrixDartVerification(
       request,
       onClose: (verification) => _verifications.remove(verification),
@@ -948,8 +970,16 @@ final class _MatrixDartVerification implements MatrixVerificationPort {
   Future<void> acceptRequest() => _request.acceptVerification();
 
   @override
-  Future<void> startEmojiComparison() =>
-      _request.continueVerification(matrix.EventTypes.Sas);
+  Future<void> startEmojiComparison() async {
+    // The peer may already have started SAS while this button was visible.
+    if (_request.state != encryption.KeyVerificationState.askChoice) return;
+    // matrix 10.2.2 uses this flag to order SAS inputs, but only sets it for
+    // the request initiator. SAS is ordered by the *start* sender instead.
+    // The SDK still resolves simultaneous starts and resets it if we lose.
+    // https://github.com/famedly/matrix-dart-sdk/issues/2292
+    _request.startedVerification = true;
+    await _request.continueVerification(matrix.EventTypes.Sas);
+  }
 
   @override
   Future<void> confirmMatch() => _request.acceptSas();

@@ -352,6 +352,10 @@ class MatrixSessionController extends ChangeNotifier
   }
 
   void _queueVerification(MatrixVerificationPort verification) {
+    if (identical(_activeVerification, verification) ||
+        _verificationQueue.contains(verification)) {
+      return;
+    }
     if (_activeVerification == null) {
       _showVerification(verification);
     } else {
